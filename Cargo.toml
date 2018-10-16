@@ -1,0 +1,22 @@
+[package]
+name = "tokio-tower"
+version = "0.1.0"
+
+description = "Bridging the protocol gap between Tokio and Tower"
+readme = "README.md"
+
+authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+
+homepage = "https://github.com/jonhoo/tokio-tower"
+repository = "https://github.com/jonhoo/tokio-tower.git"
+
+keywords = ["tokio", "tower", "asynchronous", "protocol", "transport"]
+categories = ["asynchronous", "network-programming"]
+
+license = "MIT/Apache-2.0"
+[dependencies]
+tower-service = "0.1"
+futures = "0.1"
+
+[dev-dependencies]
+tokio = "0.1"
