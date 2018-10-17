@@ -98,14 +98,14 @@ where
     T: Sink<SinkItem = Request>,
     T: Stream<Item = Response>,
     E: From<Error<T>>,
-    E: 'static,
-    Request: 'static,
-    Response: 'static,
+    E: Send + 'static,
+    Request: Send + 'static,
+    Response: Send + 'static,
 {
     type Request = Request;
     type Response = Response;
     type Error = E;
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
+    type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
         loop {
