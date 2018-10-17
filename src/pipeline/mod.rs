@@ -6,3 +6,4 @@
 
 mod client;
 pub use self::client::Client;
+pub use self::client::Error as ClientError;

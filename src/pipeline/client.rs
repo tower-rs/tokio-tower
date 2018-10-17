@@ -22,19 +22,46 @@ pub struct Client<Request, Response, T, E> {
     error: PhantomData<E>,
 }
 
-pub enum Error {
-    BrokenTransport,
+/// An error that occurred while servicing a request.
+pub enum Error<T>
+where
+    T: Sink + Stream,
+{
+    /// The underlying transport failed to send a request.
+    BrokenTransportSend(<T as Sink>::SinkError),
+
+    /// The underlying transport failed while attempting to receive a response.
+    ///
+    /// If `None`, the transport closed without error while there were pending requests.
+    BrokenTransportRecv(Option<<T as Stream>::Error>),
+
+    /// Attempted to issue a `call` when no more requests can be in flight.
+    ///
+    /// See [`tower_service::Service::poll_ready`] and [`Client::with_limit`].
     TransportFull,
+
+    /// Attempted to issue a `call`, but the underlying transport has been closed.
     ClientDropped,
+}
+
+impl<T> Error<T>
+where
+    T: Sink + Stream,
+{
+    fn from_sink_error(e: <T as Sink>::SinkError) -> Self {
+        Error::BrokenTransportSend(e)
+    }
+
+    fn from_stream_error(e: <T as Stream>::Error) -> Self {
+        Error::BrokenTransportRecv(Some(e))
+    }
 }
 
 impl<Request, Response, T, E> Client<Request, Response, T, E>
 where
     T: Sink<SinkItem = Request>,
     T: Stream<Item = Response>,
-    E: From<<T as Sink>::SinkError>,
-    E: From<<T as Stream>::Error>,
-    E: From<Error>,
+    E: From<Error<T>>,
 {
     /// Construct a new [`Client`] over the given `transport` with no limit on the number of
     /// in-flight requests.
@@ -70,9 +97,7 @@ impl<Request, Response, T, E> tower_service::Service for Client<Request, Respons
 where
     T: Sink<SinkItem = Request>,
     T: Stream<Item = Response>,
-    E: From<<T as Sink>::SinkError>,
-    E: From<<T as Stream>::Error>,
-    E: From<Error>,
+    E: From<Error<T>>,
     E: 'static,
     Request: 'static,
     Response: 'static,
@@ -86,7 +111,11 @@ where
         loop {
             // send more requests if we have them
             while let Some(req) = self.requests.pop_front() {
-                if let AsyncSink::NotReady(req) = self.transport.start_send(req)? {
+                if let AsyncSink::NotReady(req) = self
+                    .transport
+                    .start_send(req)
+                    .map_err(Error::from_sink_error)?
+                {
                     self.requests.push_front(req);
                     break;
                 } else {
@@ -96,14 +125,16 @@ where
 
             // flush out any stuff we've sent in the past
             // if it returns not_ready, we still want to see if we've got some responses
-            self.transport.poll_complete()?;
+            self.transport
+                .poll_complete()
+                .map_err(Error::from_sink_error)?;
 
             // and start looking for replies.
             //
             // note that we *could* have this just be a loop, but we don't want to poll the stream
             // if we know there's nothing for it to produce.
             while self.in_flight != 0 {
-                match self.transport.poll()? {
+                match self.transport.poll().map_err(Error::from_stream_error)? {
                     Async::Ready(Some(r)) => {
                         // ignore send failures
                         // the client may just no longer care about the response
@@ -117,7 +148,7 @@ where
                     Async::Ready(None) => {
                         // the transport terminated while we were waiting for a response!
                         // TODO: it'd be nice if we could return the transport here..
-                        return Err(E::from(Error::BrokenTransport));
+                        return Err(E::from(Error::BrokenTransportRecv(None)));
                     }
                     Async::NotReady => {
                         if let Some(mif) = self.max_in_flight {
