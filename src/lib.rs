@@ -16,7 +16,9 @@
 //! multiplexing protocol on the other hand constructs requests in such a way that they can be
 //! handled and responded to in *any* order while still allowing the client to know which response
 //! is for which request. Pipelining and multiplexing both have their advantages and disadvantages;
-//! see the module-level documentation for [`pipeline`] and `multiplex` (wip) for details.
+//! see the module-level documentation for [`pipeline`] and [`multiplex`] for details. There is
+//! also good deal of discussion in [this StackOverflow
+//! answer](https://softwareengineering.stackexchange.com/a/325888/79642).
 //!
 //! # Transports
 //!
@@ -39,4 +41,5 @@
 extern crate futures;
 extern crate tower_service;
 
+pub mod multiplex;
 pub mod pipeline;
