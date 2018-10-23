@@ -3,6 +3,7 @@ use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::{error, fmt};
 use tower_service;
 
 /// This type provides an implementation of a Tower
@@ -10,9 +11,12 @@ use tower_service;
 /// request-at-a-time protocol transport. In particular, it wraps a transport that implements
 /// `Sink<SinkItem = Request>` and `Stream<Item = Response>` with the necessary bookkeeping to
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
-pub struct Client<Request, Response, T, E> {
-    requests: VecDeque<Request>,
-    responses: VecDeque<oneshot::Sender<Response>>,
+pub struct Client<T, E>
+where
+    T: Sink + Stream,
+{
+    requests: VecDeque<<T as Sink>::SinkItem>,
+    responses: VecDeque<oneshot::Sender<<T as Stream>::Item>>,
     transport: T,
 
     max_in_flight: Option<usize>,
@@ -44,6 +48,65 @@ where
     ClientDropped,
 }
 
+impl<T> fmt::Display for Error<T>
+where
+    T: Sink + Stream,
+    <T as Sink>::SinkError: fmt::Display,
+    <T as Stream>::Error: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::BrokenTransportSend(ref se) => fmt::Display::fmt(se, f),
+            Error::BrokenTransportRecv(Some(ref se)) => fmt::Display::fmt(se, f),
+            Error::BrokenTransportRecv(None) => f.pad("transport closed with in-flight requests"),
+            Error::TransportFull => f.pad("no more in-flight requests allowed"),
+            Error::ClientDropped => f.pad("Client was dropped"),
+        }
+    }
+}
+
+impl<T> fmt::Debug for Error<T>
+where
+    T: Sink + Stream,
+    <T as Sink>::SinkError: fmt::Debug,
+    <T as Stream>::Error: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::BrokenTransportSend(ref se) => write!(f, "BrokenTransportSend({:?})", se),
+            Error::BrokenTransportRecv(Some(ref se)) => write!(f, "BrokenTransportSend({:?})", se),
+            Error::BrokenTransportRecv(None) => f.pad("BrokenTransportRecv"),
+            Error::TransportFull => f.pad("TransportFull"),
+            Error::ClientDropped => f.pad("ClientDropped"),
+        }
+    }
+}
+
+impl<T> error::Error for Error<T>
+where
+    T: Sink + Stream,
+    <T as Sink>::SinkError: error::Error,
+    <T as Stream>::Error: error::Error,
+{
+    fn cause(&self) -> Option<&error::Error> {
+        match *self {
+            Error::BrokenTransportSend(ref se) => Some(se),
+            Error::BrokenTransportRecv(Some(ref se)) => Some(se),
+            _ => None,
+        }
+    }
+
+    fn description(&self) -> &str {
+        match *self {
+            Error::BrokenTransportSend(ref se) => se.description(),
+            Error::BrokenTransportRecv(Some(ref se)) => se.description(),
+            Error::BrokenTransportRecv(None) => "transport closed with in-flight requests",
+            Error::TransportFull => "no more in-flight requests allowed",
+            Error::ClientDropped => "Client was dropped",
+        }
+    }
+}
+
 impl<T> Error<T>
 where
     T: Sink + Stream,
@@ -57,10 +120,9 @@ where
     }
 }
 
-impl<Request, Response, T, E> Client<Request, Response, T, E>
+impl<T, E> Client<T, E>
 where
-    T: Sink<SinkItem = Request>,
-    T: Stream<Item = Response>,
+    T: Sink + Stream,
     E: From<Error<T>>,
 {
     /// Construct a new [`Client`] over the given `transport` with no limit on the number of
@@ -93,17 +155,16 @@ where
     }
 }
 
-impl<Request, Response, T, E> tower_service::Service for Client<Request, Response, T, E>
+impl<T, E> tower_service::Service for Client<T, E>
 where
-    T: Sink<SinkItem = Request>,
-    T: Stream<Item = Response>,
+    T: Sink + Stream,
     E: From<Error<T>>,
     E: Send + 'static,
-    Request: Send + 'static,
-    Response: Send + 'static,
+    <T as Sink>::SinkItem: Send + 'static,
+    <T as Stream>::Item: Send + 'static,
 {
-    type Request = Request;
-    type Response = Response;
+    type Request = <T as Sink>::SinkItem;
+    type Response = <T as Stream>::Item;
     type Error = E;
     type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
