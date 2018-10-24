@@ -74,7 +74,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Error::BrokenTransportSend(ref se) => write!(f, "BrokenTransportSend({:?})", se),
-            Error::BrokenTransportRecv(Some(ref se)) => write!(f, "BrokenTransportSend({:?})", se),
+            Error::BrokenTransportRecv(Some(ref se)) => write!(f, "BrokenTransportRecv({:?})", se),
             Error::BrokenTransportRecv(None) => f.pad("BrokenTransportRecv"),
             Error::TransportFull => f.pad("TransportFull"),
             Error::ClientDropped => f.pad("ClientDropped"),
