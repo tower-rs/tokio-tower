@@ -6,7 +6,7 @@ use tower_service::Service;
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
 /// request-at-a-time protocol transport. In particular, it wraps a transport that implements
-/// `Sink<SinkItem = Request>` and `Stream<Item = Response>` with the necessary bookkeeping to
+/// `Sink<SinkItem = Response>` and `Stream<Item = Request>` with the necessary bookkeeping to
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
 pub struct Server<T, S>
 where
