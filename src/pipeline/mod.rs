@@ -11,3 +11,6 @@
 mod client;
 pub use self::client::Client;
 pub use self::client::Error as ClientError;
+mod server;
+pub use self::server::Error as ServerError;
+pub use self::server::Server;

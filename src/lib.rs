@@ -38,6 +38,7 @@
 //! [`pipeline::Client`]), and the server helper as `Server` in the same place.
 #![deny(missing_docs)]
 
+#[macro_use]
 extern crate futures;
 extern crate tower_service;
 
