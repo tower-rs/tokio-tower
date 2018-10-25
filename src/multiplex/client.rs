@@ -16,10 +16,10 @@ pub trait TagStore<Request, Response> {
     type Tag: Eq;
 
     /// Assign a fresh tag to the given `Request`, and return that tag.
-    fn assign_id(&mut self, &mut Request) -> Self::Tag;
+    fn assign_tag(&mut self, &mut Request) -> Self::Tag;
 
     /// Retire and return the tag contained in the given `Response`.
-    fn finish_id(&mut self, &Response) -> Self::Tag;
+    fn finish_tag(&mut self, &Response) -> Self::Tag;
 }
 
 /// For a transport to be usable in a [`multiplex::Client`], it must be a sink for requests, a
@@ -228,7 +228,7 @@ where
                         // note that we do a _linear_ scan of the identifiers. this saves us from
                         // keeping a HashMap around, and is _usually_ fast as long as the requests
                         // that have been pending the longest are most likely to complete next.
-                        let id = self.transport.finish_id(&r);
+                        let id = self.transport.finish_tag(&r);
                         let sender = self
                             .responses
                             .iter()
@@ -276,7 +276,7 @@ where
         }
 
         let (tx, rx) = oneshot::channel();
-        let id = self.transport.assign_id(&mut req);
+        let id = self.transport.assign_tag(&mut req);
         self.requests.push_back(req);
         self.responses.push_back((id, tx));
         Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
