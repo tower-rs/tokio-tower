@@ -44,7 +44,7 @@ fn it_works() {
 
     let fut = tx.map_err(PanicError::from).and_then(
         move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
-            let fut = tx.call(Request(0));
+            let fut1 = tx.call(Request::new(1));
 
             // continue to drive the service
             tokio::spawn(
@@ -53,7 +53,7 @@ fn it_works() {
                     .map_err(|_| ()),
             );
 
-            fut
+            fut1.inspect(|r| r.check(1))
         },
     );
     assert!(rt.block_on(fut).is_ok());

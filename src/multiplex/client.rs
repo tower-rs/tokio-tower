@@ -270,7 +270,7 @@ where
 
     fn call(&mut self, mut req: Self::Request) -> Self::Future {
         if let Some(mif) = self.max_in_flight {
-            if self.in_flight + self.requests.len() < mif {
+            if self.in_flight + self.requests.len() >= mif {
                 return Box::new(future::err(E::from(Error::TransportFull)));
             }
         }

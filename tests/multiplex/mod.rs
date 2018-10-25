@@ -1,11 +1,26 @@
 use async_bincode::*;
+use slab::Slab;
 use tokio;
 use tokio::prelude::*;
-use tokio_tower::pipeline::{Client, Server};
+use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
 use tower_service::Service;
 use {PanicError, Request, Response};
 
-mod client;
+pub(crate) struct SlabStore(Slab<()>);
+
+impl TagStore<Request, Response> for SlabStore {
+    type Tag = usize;
+    fn assign_tag(&mut self, request: &mut Request) -> usize {
+        let tag = self.0.insert(());
+        request.set_tag(tag);
+        tag
+    }
+    fn finish_tag(&mut self, response: &Response) -> usize {
+        let tag = response.get_tag();
+        self.0.remove(tag);
+        tag
+    }
+}
 
 #[test]
 fn integration() {
@@ -17,6 +32,8 @@ fn integration() {
         .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
         .map(|s| {
+            let s = MultiplexTransport::new(s, SlabStore(Slab::new()));
+
             // need to limit to one-in-flight for poll_ready to be sufficient to drive Service
             Client::with_limit(s, 1)
         });
@@ -45,7 +62,7 @@ fn integration() {
         .map(AsyncBincodeStream::from)
         .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
-        .map(|stream| Server::new(stream, EchoService));
+        .map(|stream| Server::pipelined(stream, EchoService, None));
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.spawn(
@@ -54,7 +71,7 @@ fn integration() {
     );
 
     let fut = tx.map_err(PanicError::from).and_then(
-        move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
+        move |mut tx: Client<MultiplexTransport<AsyncBincodeStream<_, Response, _, _>, _>, _>| {
             let fut1 = tx.call(Request::new(1));
 
             // continue to drive the service
