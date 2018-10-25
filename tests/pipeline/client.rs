@@ -3,7 +3,7 @@ use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::Client;
 use tower_service::Service;
-use {Request, Response};
+use {PanicError, Request, Response};
 
 #[test]
 fn it_works() {
@@ -18,7 +18,7 @@ fn it_works() {
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.spawn(
         rx.incoming()
-            .map_err(|e| panic!("{:?}", e))
+            .map_err(PanicError::from)
             .for_each(move |stream| {
                 let (r, w) = stream.split();
                 let w = AsyncBincodeWriter::from(w);
@@ -34,7 +34,8 @@ fn it_works() {
                 );
 
                 Ok(())
-            }),
+            })
+            .map_err(|_| ()),
     );
 
     // TODO: drive tx...
@@ -44,15 +45,4 @@ fn it_works() {
         },
     );
     assert!(rt.block_on(fut).is_ok());
-}
-
-struct PanicError;
-use std::fmt;
-impl<E> From<E> for PanicError
-where
-    E: fmt::Debug,
-{
-    fn from(e: E) -> Self {
-        panic!("{:?}", e)
-    }
 }

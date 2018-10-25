@@ -24,4 +24,15 @@ impl From<Request> for Response {
     }
 }
 
+struct PanicError;
+use std::fmt;
+impl<E> From<E> for PanicError
+where
+    E: fmt::Debug,
+{
+    fn from(e: E) -> Self {
+        panic!("{:?}", e)
+    }
+}
+
 mod pipeline;
