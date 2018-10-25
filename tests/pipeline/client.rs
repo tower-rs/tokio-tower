@@ -12,8 +12,12 @@ fn it_works() {
     let addr = rx.local_addr().unwrap();
     let tx = tokio::net::tcp::TcpStream::connect(&addr)
         .map(AsyncBincodeStream::from)
+        .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
-        .map(Client::new);
+        .map(|s| {
+            // need to limit to one-in-flight for poll_ready to be sufficient to drive Service
+            Client::with_limit(s, 1)
+        });
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.spawn(
@@ -21,12 +25,12 @@ fn it_works() {
             .map_err(PanicError::from)
             .for_each(move |stream| {
                 let (r, w) = stream.split();
-                let w = AsyncBincodeWriter::from(w);
                 let r = AsyncBincodeReader::from(r);
+                let w = AsyncBincodeWriter::from(w).for_async();
                 tokio::spawn(
                     r.map(|req: Request| Response::from(req))
-                        .map_err(|e| panic!("{:?}", e))
-                        .forward(w.sink_map_err(|e| panic!("{:?}", e)))
+                        .map_err(PanicError::from)
+                        .forward(w.sink_map_err(PanicError::from))
                         .then(|_| {
                             // we're probably just shutting down
                             Ok(())
@@ -38,10 +42,18 @@ fn it_works() {
             .map_err(|_| ()),
     );
 
-    // TODO: drive tx...
     let fut = tx.map_err(PanicError::from).and_then(
         move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
-            tx.call(Request).map(move |r| (tx, r))
+            let fut = tx.call(Request(0));
+
+            // continue to drive the service
+            tokio::spawn(
+                future::poll_fn(move || tx.poll_ready())
+                    .map_err(PanicError::from)
+                    .map_err(|_| ()),
+            );
+
+            fut
         },
     );
     assert!(rt.block_on(fut).is_ok());

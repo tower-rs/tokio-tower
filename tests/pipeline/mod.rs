@@ -14,8 +14,12 @@ fn integration() {
     let addr = rx.local_addr().unwrap();
     let tx = tokio::net::tcp::TcpStream::connect(&addr)
         .map(AsyncBincodeStream::from)
+        .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
-        .map(Client::new);
+        .map(|s| {
+            // need to limit to one-in-flight for poll_ready to be sufficient to drive Service
+            Client::with_limit(s, 1)
+        });
 
     struct EchoService;
     impl Service for EchoService {
@@ -39,6 +43,7 @@ fn integration() {
         .map_err(PanicError::from)
         .map(|(stream, _)| stream.unwrap())
         .map(AsyncBincodeStream::from)
+        .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
         .map(|stream| Server::new(stream, EchoService));
 
@@ -48,10 +53,18 @@ fn integration() {
             .map_err(|_| ()),
     );
 
-    // TODO: drive tx...
     let fut = tx.map_err(PanicError::from).and_then(
         move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
-            tx.call(Request).map(move |r| (tx, r))
+            let fut = tx.call(Request(0));
+
+            // continue to drive the service
+            tokio::spawn(
+                future::poll_fn(move || tx.poll_ready())
+                    .map_err(PanicError::from)
+                    .map_err(|_| ()),
+            );
+
+            fut
         },
     );
     assert!(rt.block_on(fut).is_ok());

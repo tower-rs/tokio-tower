@@ -13,14 +13,14 @@ extern crate async_bincode;
 extern crate tokio_tower;
 
 #[derive(Serialize, Deserialize)]
-pub struct Request;
+pub struct Request(u32);
 
 #[derive(Serialize, Deserialize)]
-pub struct Response;
+pub struct Response(u32);
 
 impl From<Request> for Response {
-    fn from(_: Request) -> Response {
-        Response
+    fn from(r: Request) -> Response {
+        Response(r.0)
     }
 }
 
