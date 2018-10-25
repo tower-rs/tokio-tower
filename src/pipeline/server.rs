@@ -228,8 +228,9 @@ where
                             .map_err(Error::from_sink_error)?
                         {
                             self.responses.push_front(MaybeResponse::Ready(rsp));
-                            self.in_flight -= 1;
                             break;
+                        } else {
+                            self.in_flight -= 1;
                         }
                     }
                 }
@@ -272,6 +273,7 @@ where
                 // you know what that means:
                 let fut = self.service.call(rq);
                 self.responses.push_back(MaybeResponse::Pending(fut));
+                self.in_flight += 1;
             } else {
                 // there are no more requests coming -- shut down
                 assert!(!self.finish);
