@@ -2,7 +2,8 @@ use async_bincode::*;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::{Client, Server};
-use tower_service::Service;
+//use tower_service::Service;
+use tokio_tower::DirectService;
 use {EchoService, PanicError, Request, Response};
 
 mod client;
@@ -43,7 +44,7 @@ fn integration() {
 
             // continue to drive the service
             tokio::spawn(
-                future::poll_fn(move || tx.poll_ready())
+                future::poll_fn(move || tx.poll_outstanding())
                     .map_err(PanicError::from)
                     .map_err(|_| ()),
             );

@@ -42,5 +42,39 @@
 extern crate futures;
 extern crate tower_service;
 
+use futures::{Async, Future};
+
+/// https://github.com/tower-rs/tower/issues/110#issuecomment-433193941
+pub trait DirectService<Request> {
+    /// Responses given by the service.
+    type Response;
+
+    /// Errors produced by the service.
+    type Error;
+
+    /// The future response value.
+    type Future: Future<Item = Self::Response, Error = Self::Error>;
+
+    /// Called to make room for another request.
+    ///
+    /// Should call `poll_outstanding` as necessary to finish in-flight requests.
+    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error>;
+
+    /// Called to make progress on in-flight requests.
+    ///
+    /// Should return `Ready` when all outstanding requests have been serviced.
+    fn poll_outstanding(&mut self) -> Result<Async<()>, Self::Error>;
+
+    /// Called after there will be no more calls to `call`.
+    ///
+    /// `poll_close` should ensure that all in-progress requests resolve, as well as perform and
+    /// finish any required service cleanup.
+    fn poll_close(&mut self) -> Result<Async<()>, Self::Error>;
+
+    /// Like today's Service::call, but with the caveat that poll_outstanding must
+    /// continue to be called for the returned futures to resolve.
+    fn call(&mut self, req: Request) -> Self::Future;
+}
+
 pub mod multiplex;
 pub mod pipeline;

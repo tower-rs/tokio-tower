@@ -63,11 +63,11 @@ where
 }
 
 use tokio::prelude::*;
-use tower_service::Service;
+//use tower_service::Service;
+use tokio_tower::DirectService;
 
 struct EchoService;
-impl Service for EchoService {
-    type Request = Request;
+impl DirectService<Request> for EchoService {
     type Response = Response;
     type Error = ();
     type Future = future::FutureResult<Self::Response, Self::Error>;
@@ -76,10 +76,18 @@ impl Service for EchoService {
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, r: Self::Request) -> Self::Future {
+    fn poll_outstanding(&mut self) -> Result<Async<()>, Self::Error> {
+        Ok(Async::Ready(()))
+    }
+
+    fn poll_close(&mut self) -> Result<Async<()>, Self::Error> {
+        Ok(Async::Ready(()))
+    }
+
+    fn call(&mut self, r: Request) -> Self::Future {
         future::ok(Response::from(r))
     }
 }
 
-mod multiplex;
+//mod multiplex;
 mod pipeline;
