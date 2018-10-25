@@ -1,7 +1,7 @@
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::{error, fmt};
-use tower_service::Service;
+use tower_service::{NewService, Service};
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -162,6 +162,33 @@ where
             in_flight: 0,
             finish: false,
         }
+    }
+
+    /// Manage incoming new transport instances using the given service constructor.
+    ///
+    /// For each transport that `incoming` yields, a new instance of `service` is created to
+    /// manage requests on that transport. This is roughly equivalent to:
+    ///
+    /// ```rust,ignore
+    /// incoming.map(|t| Server::pipelined(t, service.new_service(), limit))
+    /// ```
+    pub fn serve_on<TS, SS, E>(
+        incoming: TS,
+        service: SS,
+        limit: Option<usize>,
+    ) -> impl Stream<Item = Self, Error = E>
+    where
+        TS: Stream<Item = T>,
+        SS: NewService<Request = S::Request, Response = S::Response, Error = S::Error, Service = S>,
+        E: From<TS::Error>,
+        E: From<SS::InitError>,
+    {
+        incoming.map_err(E::from).and_then(move |transport| {
+            service
+                .new_service()
+                .map_err(E::from)
+                .map(move |s| Server::pipelined(transport, s, limit))
+        })
     }
 }
 
