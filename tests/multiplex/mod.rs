@@ -4,7 +4,7 @@ use tokio;
 use tokio::prelude::*;
 use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
 use tower_service::Service;
-use {PanicError, Request, Response};
+use {EchoService, PanicError, Request, Response};
 
 pub(crate) struct SlabStore(Slab<()>);
 
@@ -37,22 +37,6 @@ fn integration() {
             // need to limit to one-in-flight for poll_ready to be sufficient to drive Service
             Client::with_limit(s, 1)
         });
-
-    struct EchoService;
-    impl Service for EchoService {
-        type Request = Request;
-        type Response = Response;
-        type Error = ();
-        type Future = future::FutureResult<Self::Response, Self::Error>;
-
-        fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
-            Ok(Async::Ready(()))
-        }
-
-        fn call(&mut self, r: Self::Request) -> Self::Future {
-            future::ok(Response::from(r))
-        }
-    }
 
     let rx = rx
         .incoming()

@@ -62,5 +62,24 @@ where
     }
 }
 
+use tokio::prelude::*;
+use tower_service::Service;
+
+struct EchoService;
+impl Service for EchoService {
+    type Request = Request;
+    type Response = Response;
+    type Error = ();
+    type Future = future::FutureResult<Self::Response, Self::Error>;
+
+    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+        Ok(Async::Ready(()))
+    }
+
+    fn call(&mut self, r: Self::Request) -> Self::Future {
+        future::ok(Response::from(r))
+    }
+}
+
 mod multiplex;
 mod pipeline;
