@@ -12,3 +12,6 @@
 mod client;
 pub use self::client::Error as ClientError;
 pub use self::client::{Client, TagStore, Transport};
+mod server;
+pub use self::server::Error as ServerError;
+pub use self::server::Server;
