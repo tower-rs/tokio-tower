@@ -9,15 +9,24 @@ use tower_service;
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
 
-pub trait IdentifierStore<Request, Response> {
-    type Identifier: Eq;
+/// A transport capable of transporting tagged requests and responses must implement this
+/// interface in order to be used with a [`multiplex::Client`].
+pub trait TagStore<Request, Response> {
+    /// The type used for tags.
+    type Tag: Eq;
 
-    fn assign_id(&mut self, &mut Request) -> Self::Identifier;
-    fn finish_id(&mut self, &Response) -> Self::Identifier;
+    /// Assign a fresh tag to the given `Request`, and return that tag.
+    fn assign_id(&mut self, &mut Request) -> Self::Tag;
+
+    /// Retire and return the tag contained in the given `Response`.
+    fn finish_id(&mut self, &Response) -> Self::Tag;
 }
 
+/// For a transport to be usable in a [`multiplex::Client`], it must be a sink for requests, a
+/// stream of responses, and it must allow extracting tags from requests and responses so that the
+/// client can match up responses that arrive out-of-order.
 pub trait Transport:
-    Sink + Stream + IdentifierStore<<Self as Sink>::SinkItem, <Self as Stream>::Item>
+    Sink + Stream + TagStore<<Self as Sink>::SinkItem, <Self as Stream>::Item>
 {
 }
 
@@ -32,7 +41,7 @@ where
 {
     requests: VecDeque<<T as Sink>::SinkItem>,
     responses: VecDeque<(
-        <T as IdentifierStore<<T as Sink>::SinkItem, <T as Stream>::Item>>::Identifier,
+        <T as TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>>::Tag,
         oneshot::Sender<<T as Stream>::Item>,
     )>,
     transport: T,

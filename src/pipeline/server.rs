@@ -249,7 +249,7 @@ where
             }
 
             if self.finish {
-                // there's still work to be done, but there no more requests
+                // there's still work to be done, but there are no more requests
                 // so no need to check the incoming transport
                 return Ok(Async::NotReady);
             }
