@@ -17,10 +17,7 @@ fn integration() {
         .map(AsyncBincodeStream::from)
         .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
-        .map(|s| {
-            // need to limit to one-in-flight for poll_ready to be sufficient to drive Service
-            Client::with_limit(s, 1)
-        });
+        .map(Client::new);
 
     let rx = rx
         .incoming()
@@ -41,6 +38,8 @@ fn integration() {
     let fut = tx.map_err(PanicError::from).and_then(
         move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
             let fut1 = tx.call(Request::new(1));
+            let fut2 = tx.call(Request::new(2));
+            let fut3 = tx.call(Request::new(3));
 
             // continue to drive the service
             tokio::spawn(
@@ -50,6 +49,10 @@ fn integration() {
             );
 
             fut1.inspect(|r| r.check(1))
+                .and_then(move |_| fut2)
+                .inspect(|r| r.check(2))
+                .and_then(move |_| fut3)
+                .inspect(|r| r.check(3))
         },
     );
     assert!(rt.block_on(fut).is_ok());
