@@ -12,7 +12,7 @@ use DirectService;
 pub struct Server<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<<T as Stream>::Item>,
+    S: DirectService<T::Item>,
 {
     responses: VecDeque<MaybeResponse<S::Response, S::Future>>,
     transport: T,
@@ -32,13 +32,13 @@ enum MaybeResponse<T, F> {
 pub enum Error<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<<T as Stream>::Item>,
+    S: DirectService<T::Item>,
 {
     /// The underlying transport failed to produce a request.
-    BrokenTransportRecv(<T as Stream>::Error),
+    BrokenTransportRecv(T::Error),
 
     /// The underlying transport failed while attempting to send a response.
-    BrokenTransportSend(<T as Sink>::SinkError),
+    BrokenTransportSend(T::SinkError),
 
     /// The underlying service failed to process a request.
     Service(S::Error),
@@ -47,10 +47,10 @@ where
 impl<T, S> fmt::Display for Error<T, S>
 where
     T: Sink + Stream,
-    <T as Sink>::SinkError: fmt::Display,
-    <T as Stream>::Error: fmt::Display,
-    S: DirectService<<T as Stream>::Item>,
-    <S as DirectService<<T as Stream>::Item>>::Error: fmt::Display,
+    T::SinkError: fmt::Display,
+    T::Error: fmt::Display,
+    S: DirectService<T::Item>,
+    S::Error: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -64,10 +64,10 @@ where
 impl<T, S> fmt::Debug for Error<T, S>
 where
     T: Sink + Stream,
-    <T as Sink>::SinkError: fmt::Debug,
-    <T as Stream>::Error: fmt::Debug,
-    S: DirectService<<T as Stream>::Item>,
-    <S as DirectService<<T as Stream>::Item>>::Error: fmt::Debug,
+    T::SinkError: fmt::Debug,
+    T::Error: fmt::Debug,
+    S: DirectService<T::Item>,
+    S::Error: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -81,10 +81,10 @@ where
 impl<T, S> error::Error for Error<T, S>
 where
     T: Sink + Stream,
-    <T as Sink>::SinkError: error::Error,
-    <T as Stream>::Error: error::Error,
-    S: DirectService<<T as Stream>::Item>,
-    <S as DirectService<<T as Stream>::Item>>::Error: error::Error,
+    T::SinkError: error::Error,
+    T::Error: error::Error,
+    S: DirectService<T::Item>,
+    S::Error: error::Error,
 {
     fn cause(&self) -> Option<&error::Error> {
         match *self {
@@ -106,17 +106,17 @@ where
 impl<T, S> Error<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<<T as Stream>::Item>,
+    S: DirectService<T::Item>,
 {
-    fn from_sink_error(e: <T as Sink>::SinkError) -> Self {
+    fn from_sink_error(e: T::SinkError) -> Self {
         Error::BrokenTransportSend(e)
     }
 
-    fn from_stream_error(e: <T as Stream>::Error) -> Self {
+    fn from_stream_error(e: T::Error) -> Self {
         Error::BrokenTransportRecv(e)
     }
 
-    fn from_service_error(e: <S as DirectService<<T as Stream>::Item>>::Error) -> Self {
+    fn from_service_error(e: S::Error) -> Self {
         Error::Service(e)
     }
 }
@@ -124,7 +124,7 @@ where
 impl<T, S> Server<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<<T as Stream>::Item>,
+    S: DirectService<T::Item>,
 {
     /// Construct a new [`Server`] over the given `transport` that services requests using the
     /// given `service`.

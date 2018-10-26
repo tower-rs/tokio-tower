@@ -16,8 +16,8 @@ pub struct Client<T, E>
 where
     T: Sink + Stream,
 {
-    requests: VecDeque<<T as Sink>::SinkItem>,
-    responses: VecDeque<oneshot::Sender<<T as Stream>::Item>>,
+    requests: VecDeque<T::SinkItem>,
+    responses: VecDeque<oneshot::Sender<T::Item>>,
     transport: T,
 
     max_in_flight: Option<usize>,
@@ -34,12 +34,12 @@ where
     T: Sink + Stream,
 {
     /// The underlying transport failed to send a request.
-    BrokenTransportSend(<T as Sink>::SinkError),
+    BrokenTransportSend(T::SinkError),
 
     /// The underlying transport failed while attempting to receive a response.
     ///
     /// If `None`, the transport closed without error while there were pending requests.
-    BrokenTransportRecv(Option<<T as Stream>::Error>),
+    BrokenTransportRecv(Option<T::Error>),
 
     /// Attempted to issue a `call` when no more requests can be in flight.
     ///
@@ -53,8 +53,8 @@ where
 impl<T> fmt::Display for Error<T>
 where
     T: Sink + Stream,
-    <T as Sink>::SinkError: fmt::Display,
-    <T as Stream>::Error: fmt::Display,
+    T::SinkError: fmt::Display,
+    T::Error: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -70,8 +70,8 @@ where
 impl<T> fmt::Debug for Error<T>
 where
     T: Sink + Stream,
-    <T as Sink>::SinkError: fmt::Debug,
-    <T as Stream>::Error: fmt::Debug,
+    T::SinkError: fmt::Debug,
+    T::Error: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -87,8 +87,8 @@ where
 impl<T> error::Error for Error<T>
 where
     T: Sink + Stream,
-    <T as Sink>::SinkError: error::Error,
-    <T as Stream>::Error: error::Error,
+    T::SinkError: error::Error,
+    T::Error: error::Error,
 {
     fn cause(&self) -> Option<&error::Error> {
         match *self {
@@ -113,11 +113,11 @@ impl<T> Error<T>
 where
     T: Sink + Stream,
 {
-    fn from_sink_error(e: <T as Sink>::SinkError) -> Self {
+    fn from_sink_error(e: T::SinkError) -> Self {
         Error::BrokenTransportSend(e)
     }
 
-    fn from_stream_error(e: <T as Stream>::Error) -> Self {
+    fn from_stream_error(e: T::Error) -> Self {
         Error::BrokenTransportRecv(Some(e))
     }
 }
@@ -159,15 +159,15 @@ where
     }
 }
 
-impl<T, E> DirectService<<T as Sink>::SinkItem> for Client<T, E>
+impl<T, E> DirectService<T::SinkItem> for Client<T, E>
 where
     T: Sink + Stream,
     E: From<Error<T>>,
     E: Send + 'static,
-    <T as Sink>::SinkItem: Send + 'static,
-    <T as Stream>::Item: Send + 'static,
+    T::SinkItem: Send + 'static,
+    T::Item: Send + 'static,
 {
-    type Response = <T as Stream>::Item;
+    type Response = T::Item;
     type Error = E;
     type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
@@ -261,7 +261,7 @@ where
         self.poll_outstanding()
     }
 
-    fn call(&mut self, req: <T as Sink>::SinkItem) -> Self::Future {
+    fn call(&mut self, req: T::SinkItem) -> Self::Future {
         if let Some(mif) = self.max_in_flight {
             if self.in_flight + self.requests.len() >= mif {
                 return Box::new(future::err(E::from(Error::TransportFull)));
