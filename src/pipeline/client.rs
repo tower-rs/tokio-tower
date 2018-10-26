@@ -276,8 +276,3 @@ where
         Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // TODO: O:)
-}
