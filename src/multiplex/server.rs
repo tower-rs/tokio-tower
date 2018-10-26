@@ -2,7 +2,8 @@ use futures::stream::futures_unordered::FuturesUnordered;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::{error, fmt};
-use tower_service::{NewService, Service};
+//use tower_service::{NewService, Service};
+use DirectService;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -16,7 +17,7 @@ use tower_service::{NewService, Service};
 pub struct Server<T, S>
 where
     T: Sink + Stream,
-    S: Service,
+    S: DirectService<<T as Stream>::Item>,
 {
     responses: VecDeque<S::Response>,
     pending: FuturesUnordered<S::Future>,
@@ -32,7 +33,7 @@ where
 pub enum Error<T, S>
 where
     T: Sink + Stream,
-    S: Service,
+    S: DirectService<<T as Stream>::Item>,
 {
     /// The underlying transport failed to produce a request.
     BrokenTransportRecv(<T as Stream>::Error),
@@ -49,8 +50,8 @@ where
     T: Sink + Stream,
     <T as Sink>::SinkError: fmt::Display,
     <T as Stream>::Error: fmt::Display,
-    S: Service,
-    <S as Service>::Error: fmt::Display,
+    S: DirectService<<T as Stream>::Item>,
+    <S as DirectService<<T as Stream>::Item>>::Error: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -66,8 +67,8 @@ where
     T: Sink + Stream,
     <T as Sink>::SinkError: fmt::Debug,
     <T as Stream>::Error: fmt::Debug,
-    S: Service,
-    <S as Service>::Error: fmt::Debug,
+    S: DirectService<<T as Stream>::Item>,
+    <S as DirectService<<T as Stream>::Item>>::Error: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -83,8 +84,8 @@ where
     T: Sink + Stream,
     <T as Sink>::SinkError: error::Error,
     <T as Stream>::Error: error::Error,
-    S: Service,
-    <S as Service>::Error: error::Error,
+    S: DirectService<<T as Stream>::Item>,
+    <S as DirectService<<T as Stream>::Item>>::Error: error::Error,
 {
     fn cause(&self) -> Option<&error::Error> {
         match *self {
@@ -106,7 +107,7 @@ where
 impl<T, S> Error<T, S>
 where
     T: Sink + Stream,
-    S: Service,
+    S: DirectService<<T as Stream>::Item>,
 {
     fn from_sink_error(e: <T as Sink>::SinkError) -> Self {
         Error::BrokenTransportSend(e)
@@ -116,7 +117,7 @@ where
         Error::BrokenTransportRecv(e)
     }
 
-    fn from_service_error(e: <S as Service>::Error) -> Self {
+    fn from_service_error(e: <S as DirectService<<T as Stream>::Item>>::Error) -> Self {
         Error::Service(e)
     }
 }
@@ -124,7 +125,7 @@ where
 impl<T, S> Server<T, S>
 where
     T: Sink + Stream,
-    S: Service,
+    S: DirectService<<T as Stream>::Item>,
 {
     /// Construct a new [`Server`] over the given `transport` that services requests using the
     /// given `service`.
@@ -148,6 +149,7 @@ where
         }
     }
 
+    /*
     /// Manage incoming new transport instances using the given service constructor.
     ///
     /// For each transport that `incoming` yields, a new instance of `service` is created to
@@ -174,20 +176,33 @@ where
                 .map(move |s| Server::pipelined(transport, s, limit))
         })
     }
+    */
 }
 
 impl<T, S> Future for Server<T, S>
 where
-    S: Service,
+    S: DirectService<<T as Stream>::Item>,
     T: Sink<SinkItem = S::Response>,
-    T: Stream<Item = S::Request>,
+    T: Stream,
 {
     type Item = ();
     type Error = Error<T, S>;
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         loop {
-            // TODO: also need to drive the service somehow!
+            // first, if there are any pending requests, try to make service progress
+            // TODO: only if any are ::Pending
+            if !self.pending.is_empty() {
+                if self.finish {
+                    self.service
+                        .poll_close()
+                        .map_err(Error::from_service_error)?;
+                } else {
+                    self.service
+                        .poll_outstanding()
+                        .map_err(Error::from_service_error)?;
+                }
+            }
 
             // first, poll pending futures to see if any have produced responses
             loop {

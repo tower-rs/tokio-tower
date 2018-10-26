@@ -4,7 +4,8 @@ use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
-use tower_service;
+//use tower_service;
+use DirectService;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
@@ -182,7 +183,7 @@ where
     }
 }
 
-impl<T, E> tower_service::Service for Client<T, E>
+impl<T, E> DirectService<<T as Sink>::SinkItem> for Client<T, E>
 where
     T: Transport,
     E: From<Error<T>>,
@@ -190,12 +191,26 @@ where
     <T as Sink>::SinkItem: Send + 'static,
     <T as Stream>::Item: Send + 'static,
 {
-    type Request = <T as Sink>::SinkItem;
     type Response = <T as Stream>::Item;
     type Error = E;
     type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+        if let Some(mif) = self.max_in_flight {
+            if self.in_flight + self.requests.len() >= mif {
+                // not enough request slots -- need to handle some outstanding
+                self.poll_outstanding()?;
+
+                if self.in_flight + self.requests.len() >= mif {
+                    // that didn't help -- wait to be awoken again
+                    return Ok(Async::NotReady);
+                }
+            }
+        }
+        return Ok(Async::Ready(()));
+    }
+
+    fn poll_outstanding(&mut self) -> Result<Async<()>, Self::Error> {
         loop {
             // send more requests if we have them
             while let Some(req) = self.requests.pop_front() {
@@ -211,19 +226,21 @@ where
                 }
             }
 
-            // flush out any stuff we've sent in the past
-            // if it returns not_ready, we still want to see if we've got some responses
-            self.transport
-                .poll_complete()
-                .map_err(Error::from_sink_error)?;
+            if self.in_flight != 0 {
+                // flush out any stuff we've sent in the past
+                // if it returns not_ready, we still want to see if we've got some responses
+                self.transport
+                    .poll_complete()
+                    .map_err(Error::from_sink_error)?;
+            }
 
             // and start looking for replies.
             //
             // note that we *could* have this just be a loop, but we don't want to poll the stream
             // if we know there's nothing for it to produce.
             while self.in_flight != 0 {
-                match self.transport.poll().map_err(Error::from_stream_error)? {
-                    Async::Ready(Some(r)) => {
+                match try_ready!(self.transport.poll().map_err(Error::from_stream_error)) {
+                    Some(r) => {
                         // find the appropriate response channel.
                         // note that we do a _linear_ scan of the identifiers. this saves us from
                         // keeping a HashMap around, and is _usually_ fast as long as the requests
@@ -245,30 +262,26 @@ where
                         let _ = sender.send(r);
                         self.in_flight -= 1;
                     }
-                    Async::Ready(None) => {
+                    None => {
                         // the transport terminated while we were waiting for a response!
                         // TODO: it'd be nice if we could return the transport here..
                         return Err(E::from(Error::BrokenTransportRecv(None)));
                     }
-                    Async::NotReady => {
-                        if let Some(mif) = self.max_in_flight {
-                            if self.in_flight + self.requests.len() < mif {
-                                return Ok(Async::Ready(()));
-                            }
-                        }
-
-                        return Ok(Async::NotReady);
-                    }
                 }
             }
 
-            if self.requests.is_empty() {
+            if self.requests.is_empty() && self.in_flight == 0 {
                 return Ok(Async::Ready(()));
             }
         }
     }
 
-    fn call(&mut self, mut req: Self::Request) -> Self::Future {
+    fn poll_close(&mut self) -> Result<Async<()>, Self::Error> {
+        // TODO: self.finish = true
+        self.poll_outstanding()
+    }
+
+    fn call(&mut self, mut req: <T as Sink>::SinkItem) -> Self::Future {
         if let Some(mif) = self.max_in_flight {
             if self.in_flight + self.requests.len() >= mif {
                 return Box::new(future::err(E::from(Error::TransportFull)));

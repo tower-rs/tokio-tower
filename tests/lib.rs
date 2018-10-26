@@ -89,5 +89,5 @@ impl DirectService<Request> for EchoService {
     }
 }
 
-//mod multiplex;
+mod multiplex;
 mod pipeline;
