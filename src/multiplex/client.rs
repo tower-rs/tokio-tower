@@ -49,6 +49,7 @@ where
 
     max_in_flight: Option<usize>,
     in_flight: usize,
+    finish: bool,
 
     #[allow(unused)]
     error: PhantomData<E>,
@@ -163,6 +164,7 @@ where
             max_in_flight: None,
             in_flight: 0,
             error: PhantomData::<E>,
+            finish: false,
         }
     }
 
@@ -179,6 +181,7 @@ where
             max_in_flight: Some(max_in_flight),
             in_flight: 0,
             error: PhantomData::<E>,
+            finish: false,
         }
     }
 }
@@ -228,10 +231,22 @@ where
 
             if self.in_flight != 0 {
                 // flush out any stuff we've sent in the past
-                // if it returns not_ready, we still want to see if we've got some responses
-                self.transport
-                    .poll_complete()
-                    .map_err(Error::from_sink_error)?;
+                // don't return on NotReady since we have to check for responses too
+                if self.finish && self.requests.is_empty() {
+                    // we're closing up shop!
+                    //
+                    // note that the check for requests.is_empty() is necessary, because
+                    // Sink::close() requires that we never call start_send ever again!
+                    //
+                    // close() implies poll_complete()
+                    //
+                    // FIXME: if close returns Ready, are we allowed to call close again?
+                    self.transport.close().map_err(Error::from_sink_error)?;
+                } else {
+                    self.transport
+                        .poll_complete()
+                        .map_err(Error::from_sink_error)?;
+                }
             }
 
             // and start looking for replies.
@@ -271,13 +286,17 @@ where
             }
 
             if self.requests.is_empty() && self.in_flight == 0 {
+                if self.finish {
+                    // we're completely done once close() finishes!
+                    try_ready!(self.transport.close().map_err(Error::from_sink_error));
+                }
                 return Ok(Async::Ready(()));
             }
         }
     }
 
     fn poll_close(&mut self) -> Result<Async<()>, Self::Error> {
-        // TODO: self.finish = true
+        self.finish = true;
         self.poll_outstanding()
     }
 
@@ -287,6 +306,8 @@ where
                 return Box::new(future::err(E::from(Error::TransportFull)));
             }
         }
+
+        assert!(!self.finish, "invoked call() after poll_close()");
 
         let (tx, rx) = oneshot::channel();
         let id = self.transport.assign_tag(&mut req);
