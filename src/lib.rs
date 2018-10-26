@@ -76,5 +76,6 @@ pub trait DirectService<Request> {
     fn call(&mut self, req: Request) -> Self::Future;
 }
 
+pub mod buffer;
 pub mod multiplex;
 pub mod pipeline;

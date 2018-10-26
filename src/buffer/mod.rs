@@ -8,16 +8,15 @@
 //! Currently, `Buffer` uses an unbounded buffering strategy, which is not a
 //! good thing to put in production situations. However, it illustrates the idea
 //! and capabilities around adding buffering to an arbitrary `Service`.
-
-#[macro_use]
-extern crate futures;
-extern crate tower_service;
+//!
+//! This is a version of `tower-buffer` adapted to use `DirectService`.
 
 use futures::future::Executor;
 use futures::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures::sync::oneshot;
 use futures::{Async, Future, Poll, Stream};
 use tower_service::Service;
+use DirectService;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -27,18 +26,18 @@ use std::{error, fmt};
 /// Adds a buffer in front of an inner service.
 ///
 /// See crate level documentation for more details.
-pub struct Buffer<T>
+pub struct Buffer<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
-    tx: UnboundedSender<Message<T>>,
+    tx: UnboundedSender<Message<T, Request>>,
     state: Arc<State>,
 }
 
 /// Future eventually completed with the response to the original request.
-pub struct ResponseFuture<T>
+pub struct ResponseFuture<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
     state: ResponseState<T::Future>,
 }
@@ -46,19 +45,22 @@ where
 /// Errors produced by `Buffer`.
 #[derive(Debug)]
 pub enum Error<T> {
+    /// The `Service` call errored.
     Inner(T),
+    /// The underlying `Service` failed.
     Closed,
 }
 
 /// Task that handles processing the buffer. This type should not be used
 /// directly, instead `Buffer` requires an `Executor` that can accept this task.
-pub struct Worker<T>
+pub struct Worker<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
-    current_message: Option<Message<T>>,
-    rx: UnboundedReceiver<Message<T>>,
+    current_message: Option<Message<T, Request>>,
+    rx: UnboundedReceiver<Message<T, Request>>,
     service: T,
+    finish: bool,
     state: Arc<State>,
 }
 
@@ -70,8 +72,11 @@ pub struct SpawnError<T> {
 
 /// Message sent over buffer
 #[derive(Debug)]
-struct Message<T: Service> {
-    request: T::Request,
+struct Message<T, Request>
+where
+    T: DirectService<Request>,
+{
+    request: Request,
     tx: oneshot::Sender<T::Future>,
 }
 
@@ -85,9 +90,9 @@ enum ResponseState<T> {
     Poll(T),
 }
 
-impl<T> Buffer<T>
+impl<T, Request> Buffer<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
     /// Creates a new `Buffer` wrapping `service`.
     ///
@@ -96,7 +101,7 @@ where
     /// service.
     pub fn new<E>(service: T, executor: &E) -> Result<Self, SpawnError<T>>
     where
-        E: Executor<Worker<T>>,
+        E: Executor<Worker<T, Request>>,
     {
         let (tx, rx) = mpsc::unbounded();
 
@@ -108,6 +113,7 @@ where
             current_message: None,
             rx,
             service,
+            finish: false,
             state: state.clone(),
         };
 
@@ -118,14 +124,14 @@ where
     }
 }
 
-impl<T> Service for Buffer<T>
+impl<T, Request> Service for Buffer<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
-    type Request = T::Request;
+    type Request = Request;
     type Response = T::Response;
     type Error = Error<T::Error>;
-    type Future = ResponseFuture<T>;
+    type Future = ResponseFuture<T, Request>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         // If the inner service has errored, then we error here.
@@ -153,9 +159,9 @@ where
     }
 }
 
-impl<T> Clone for Buffer<T>
+impl<T, Request> Clone for Buffer<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -167,9 +173,9 @@ where
 
 // ===== impl ResponseFuture =====
 
-impl<T> Future for ResponseFuture<T>
+impl<T, Request> Future for ResponseFuture<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
     type Item = T::Response;
     type Error = Error<T::Error>;
@@ -198,12 +204,17 @@ where
 
 // ===== impl Worker =====
 
-impl<T> Worker<T>
+impl<T, Request> Worker<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
     /// Return the next queued Message that hasn't been canceled.
-    fn poll_next_msg(&mut self) -> Poll<Option<Message<T>>, ()> {
+    fn poll_next_msg(&mut self) -> Poll<Option<Message<T, Request>>, ()> {
+        if self.finish {
+            // We've already received None and are shutting down
+            return Ok(Async::Ready(None));
+        }
+
         if let Some(mut msg) = self.current_message.take() {
             // poll_cancel returns Async::Ready is the receiver is dropped.
             // Returning NotReady means it is still alive, so we should still
@@ -225,34 +236,69 @@ where
     }
 }
 
-impl<T> Future for Worker<T>
+impl<T, Request> Future for Worker<T, Request>
 where
-    T: Service,
+    T: DirectService<Request>,
 {
     type Item = ();
     type Error = ();
 
     fn poll(&mut self) -> Poll<(), ()> {
-        while let Some(msg) = try_ready!(self.poll_next_msg()) {
-            // Wait for the service to be ready
-            match self.service.poll_ready() {
-                Ok(Async::Ready(())) => {
-                    let response = self.service.call(msg.request);
+        let mut any_outstanding = true;
+        loop {
+            match self.poll_next_msg()? {
+                Async::Ready(Some(msg)) => {
+                    // Wait for the service to be ready
+                    match self.service.poll_ready() {
+                        Ok(Async::Ready(())) => {
+                            let response = self.service.call(msg.request);
 
-                    // Send the response future back to the sender.
-                    //
-                    // An error means the request had been canceled in-between
-                    // our calls, the response future will just be dropped.
-                    let _ = msg.tx.send(response);
+                            // Send the response future back to the sender.
+                            //
+                            // An error means the request had been canceled in-between
+                            // our calls, the response future will just be dropped.
+                            let _ = msg.tx.send(response);
+
+                            // Try to queue another request before we poll outstanding requests.
+                            any_outstanding = true;
+                            continue;
+                        }
+                        Ok(Async::NotReady) => {
+                            // Put out current message back in its slot.
+                            self.current_message = Some(msg);
+                            // We don't want to return quite yet
+                            // We want to also make progress on current requests
+                            break;
+                        }
+                        Err(_) => {
+                            self.state.open.store(false, Ordering::Release);
+                            return Ok(().into());
+                        }
+                    }
                 }
-                Ok(Async::NotReady) => {
-                    // Put out current message back in its slot.
-                    self.current_message = Some(msg);
+                Async::Ready(None) => {
+                    // No more more requests _ever_.
+                    self.finish = true;
+                }
+                Async::NotReady if any_outstanding => {
+                    // Make some progress on the service if we can.
+                }
+                Async::NotReady => {
+                    // There are no outstanding requests to make progress on.
+                    // And we don't have any new requests to enqueue.
+                    // So we yield.
                     return Ok(Async::NotReady);
                 }
-                Err(_) => {
-                    self.state.open.store(false, Ordering::Release);
-                    return Ok(().into());
+            }
+
+            if self.finish {
+                try_ready!(self.service.poll_close().map_err(|_| ()));
+                // We are all done!
+                break;
+            } else {
+                if let Async::Ready(()) = self.service.poll_outstanding().map_err(|_| ())? {
+                    // Note to future iterations that there's no reason to call poll_outsanding.
+                    any_outstanding = false;
                 }
             }
         }
