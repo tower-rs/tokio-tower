@@ -124,11 +124,10 @@ where
     }
 }
 
-impl<T, Request> Service for Buffer<T, Request>
+impl<T, Request> Service<Request> for Buffer<T, Request>
 where
     T: DirectService<Request>,
 {
-    type Request = Request;
     type Response = T::Response;
     type Error = Error<T::Error>;
     type Future = ResponseFuture<T, Request>;
@@ -142,7 +141,7 @@ where
         }
     }
 
-    fn call(&mut self, request: Self::Request) -> Self::Future {
+    fn call(&mut self, request: Request) -> Self::Future {
         // TODO:
         // ideally we'd poll_ready again here so we don't allocate the oneshot
         // if the try_send is about to fail, but sadly we can't call poll_ready

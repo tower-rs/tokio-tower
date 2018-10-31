@@ -25,3 +25,6 @@ serde = "1.0"
 serde_derive = "1.0"
 async-bincode = "0.4"
 slab = "0.4"
+
+[patch.crates-io]
+tower-service = { git = "https://github.com/tower-rs/tower.git", branch = "generic-request" }
