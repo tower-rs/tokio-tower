@@ -40,6 +40,13 @@
 
 #[macro_use]
 extern crate futures;
+#[macro_use]
+extern crate log;
+extern crate indexmap;
+extern crate rand;
+extern crate tokio_timer;
+extern crate tower_balance;
+extern crate tower_discover;
 extern crate tower_service;
 
 use futures::{Async, Future};
@@ -76,6 +83,7 @@ pub trait DirectService<Request> {
     fn call(&mut self, req: Request) -> Self::Future;
 }
 
+pub mod balance;
 pub mod buffer;
 pub mod multiplex;
 pub mod pipeline;

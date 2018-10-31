@@ -17,7 +17,13 @@ license = "MIT/Apache-2.0"
 
 [dependencies]
 tower-service = "0.1"
+tower-discover = "0.1"
+tower-balance = "0.1"
 futures = "0.1"
+log = "0.4.1"
+rand = "0.5"
+tokio-timer = "0.2.4"
+indexmap = "1"
 
 [dev-dependencies]
 tokio = "0.1"
@@ -28,3 +34,5 @@ slab = "0.4"
 
 [patch.crates-io]
 tower-service = { git = "https://github.com/tower-rs/tower.git", branch = "generic-request" }
+tower-discover = { git = "https://github.com/tower-rs/tower.git", branch = "generic-request" }
+tower-balance = { git = "https://github.com/tower-rs/tower.git", branch = "generic-request" }
