@@ -14,6 +14,7 @@ use futures::{Async, Future, Poll, Stream};
 use tower_service::Service;
 use DirectService;
 
+use std::marker::PhantomData;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -24,16 +25,16 @@ use std::{error, fmt};
 /// See crate level documentation for more details.
 pub struct Buffer<T, Request>
 where
-    T: DirectService<Request>,
+    T: Service<Request>,
 {
-    tx: mpsc::Sender<Message<T, Request>>,
+    tx: mpsc::Sender<Message<T::Future, Request>>,
     state: Arc<State>,
 }
 
 /// Future eventually completed with the response to the original request.
 pub struct ResponseFuture<T, Request>
 where
-    T: DirectService<Request>,
+    T: Service<Request>,
 {
     state: ResponseState<T::Future>,
 }
@@ -47,14 +48,77 @@ pub enum Error<T> {
     Closed,
 }
 
+/// A wrapper that exposes a `Service` (which does not need to be driven) as a `DirectedService` so
+/// that a construct that is *able* to take a `DirectedService` can also take instances of
+/// `Service`.
+pub struct DirectedService<T, Request>
+where
+    T: Service<Request>,
+{
+    inner: T,
+    _marker: PhantomData<Request>,
+}
+
+impl<T, Request> DirectService<Request> for DirectedService<T, Request>
+where
+    T: Service<Request>,
+{
+    type Response = T::Response;
+    type Error = T::Error;
+    type Future = T::Future;
+
+    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+        self.inner.poll_ready()
+    }
+
+    fn poll_outstanding(&mut self) -> Result<Async<()>, Self::Error> {
+        // TODO: is this the right thing to do?
+        Ok(Async::Ready(()))
+    }
+
+    fn poll_close(&mut self) -> Result<Async<()>, Self::Error> {
+        // TODO: is this the right thing to do?
+        Ok(Async::Ready(()))
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        self.inner.call(req)
+    }
+}
+
+/// A handle to a `DirectService` that has been spawned elsewhere.
+pub struct HandleTo<T, Request>
+where
+    T: DirectService<Request>,
+{
+    _marker: PhantomData<(T, Request)>,
+}
+
+impl<T, Request> Service<Request> for HandleTo<T, Request>
+where
+    T: DirectService<Request>,
+{
+    type Response = T::Response;
+    type Error = T::Error;
+    type Future = T::Future;
+
+    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+        unreachable!("cannot poll service through marker")
+    }
+
+    fn call(&mut self, _: Request) -> Self::Future {
+        unreachable!("cannot call service through marker")
+    }
+}
+
 /// Task that handles processing the buffer. This type should not be used
 /// directly, instead `Buffer` requires an `Executor` that can accept this task.
 pub struct Worker<T, Request>
 where
     T: DirectService<Request>,
 {
-    current_message: Option<Message<T, Request>>,
-    rx: mpsc::Receiver<Message<T, Request>>,
+    current_message: Option<Message<T::Future, Request>>,
+    rx: mpsc::Receiver<Message<T::Future, Request>>,
     service: T,
     finish: bool,
     state: Arc<State>,
@@ -68,12 +132,9 @@ pub struct SpawnError<T> {
 
 /// Message sent over buffer
 #[derive(Debug)]
-struct Message<T, Request>
-where
-    T: DirectService<Request>,
-{
+struct Message<F, Request> {
     request: Request,
-    tx: oneshot::Sender<T::Future>,
+    tx: oneshot::Sender<F>,
 }
 
 /// State shared between `Buffer` and `Worker`
@@ -89,7 +150,7 @@ enum ResponseState<T> {
 
 impl<T, Request> Buffer<T, Request>
 where
-    T: DirectService<Request>,
+    T: Service<Request>,
 {
     /// Creates a new `Buffer` wrapping `service`.
     ///
@@ -100,6 +161,46 @@ where
     /// `bound` gives the maximal number of requests that can be queued for the service before
     /// backpressure is applied to callers.
     pub fn new<E>(service: T, bound: usize, executor: &E) -> Result<Self, SpawnError<T>>
+    where
+        E: Executor<Worker<DirectedService<T, Request>, Request>>,
+    {
+        let (tx, rx) = mpsc::channel(bound);
+
+        let state = Arc::new(State {
+            open: AtomicBool::new(true),
+        });
+
+        let worker = Worker {
+            current_message: None,
+            rx,
+            service: DirectedService {
+                inner: service,
+                _marker: PhantomData,
+            },
+            finish: false,
+            state: state.clone(),
+        };
+
+        // TODO: handle error
+        executor.execute(worker).ok().unwrap();
+
+        Ok(Buffer { tx, state: state })
+    }
+}
+
+impl<T, Request> Buffer<HandleTo<T, Request>, Request>
+where
+    T: DirectService<Request>,
+{
+    /// Creates a new `Buffer` wrapping the given directly driven `service`.
+    ///
+    /// `executor` is used to spawn a new `Worker` task that is dedicated to
+    /// draining the buffer and dispatching the requests to the internal
+    /// service.
+    ///
+    /// `bound` gives the maximal number of requests that can be queued for the service before
+    /// backpressure is applied to callers.
+    pub fn new_direct<E>(service: T, bound: usize, executor: &E) -> Result<Self, SpawnError<T>>
     where
         E: Executor<Worker<T, Request>>,
     {
@@ -126,7 +227,7 @@ where
 
 impl<T, Request> Service<Request> for Buffer<T, Request>
 where
-    T: DirectService<Request>,
+    T: Service<Request>,
 {
     type Response = T::Response;
     type Error = Error<T::Error>;
@@ -164,7 +265,7 @@ where
 
 impl<T, Request> Clone for Buffer<T, Request>
 where
-    T: DirectService<Request>,
+    T: Service<Request>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -178,7 +279,7 @@ where
 
 impl<T, Request> Future for ResponseFuture<T, Request>
 where
-    T: DirectService<Request>,
+    T: Service<Request>,
 {
     type Item = T::Response;
     type Error = Error<T::Error>;
@@ -215,7 +316,7 @@ where
     T: DirectService<Request>,
 {
     /// Return the next queued Message that hasn't been canceled.
-    fn poll_next_msg(&mut self) -> Poll<Option<Message<T, Request>>, ()> {
+    fn poll_next_msg(&mut self) -> Poll<Option<Message<T::Future, Request>>, ()> {
         if self.finish {
             // We've already received None and are shutting down
             return Ok(Async::Ready(None));

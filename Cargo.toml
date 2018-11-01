@@ -33,6 +33,7 @@ async-bincode = "0.4"
 slab = "0.4"
 
 [patch.crates-io]
-tower-service = { git = "https://github.com/tower-rs/tower.git", branch = "generic-request" }
-tower-discover = { git = "https://github.com/tower-rs/tower.git", branch = "generic-request" }
-tower-balance = { git = "https://github.com/tower-rs/tower.git", branch = "generic-request" }
+tower-service = { git = "https://github.com/jonhoo/tower.git" }
+tower-discover = { git = "https://github.com/jonhoo/tower.git" }
+tower-balance = { git = "https://github.com/jonhoo/tower.git" }
+tower-buffer = { git = "https://github.com/jonhoo/tower.git" }
