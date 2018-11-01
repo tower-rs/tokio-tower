@@ -163,13 +163,13 @@ impl<T, E> DirectService<T::SinkItem> for Client<T, E>
 where
     T: Sink + Stream,
     E: From<Error<T>>,
-    E: Send + 'static,
-    T::SinkItem: Send + 'static,
-    T::Item: Send + 'static,
+    E: 'static,
+    T::SinkItem: 'static,
+    T::Item: 'static,
 {
     type Response = T::Item;
     type Error = E;
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
+    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
         if let Some(mif) = self.max_in_flight {
