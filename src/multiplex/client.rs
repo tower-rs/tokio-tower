@@ -1,11 +1,10 @@
-use crate::DirectService;
 use futures::future;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
-//use tower_service;
+use tower_service::DirectService;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
@@ -199,7 +198,7 @@ where
         if let Some(mif) = self.max_in_flight {
             if self.in_flight + self.requests.len() >= mif {
                 // not enough request slots -- need to handle some outstanding
-                self.poll_outstanding()?;
+                self.poll_service()?;
 
                 if self.in_flight + self.requests.len() >= mif {
                     // that didn't help -- wait to be awoken again
@@ -210,7 +209,7 @@ where
         return Ok(Async::Ready(()));
     }
 
-    fn poll_outstanding(&mut self) -> Result<Async<()>, Self::Error> {
+    fn poll_service(&mut self) -> Result<Async<()>, Self::Error> {
         loop {
             // send more requests if we have them
             while let Some(req) = self.requests.pop_front() {
@@ -294,7 +293,7 @@ where
 
     fn poll_close(&mut self) -> Result<Async<()>, Self::Error> {
         self.finish = true;
-        self.poll_outstanding()
+        self.poll_service()
     }
 
     fn call(&mut self, mut req: T::SinkItem) -> Self::Future {

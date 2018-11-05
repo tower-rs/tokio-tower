@@ -3,8 +3,8 @@ use slab::Slab;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
+use tower_service::DirectService;
 //use tower_service::Service;
-use tokio_tower::DirectService;
 use {EchoService, PanicError, Request, Response};
 
 pub(crate) struct SlabStore(Slab<()>);
@@ -58,7 +58,7 @@ fn integration() {
 
             // continue to drive the service
             tokio::spawn(
-                future::poll_fn(move || tx.poll_outstanding())
+                future::poll_fn(move || tx.poll_service())
                     .map_err(PanicError::from)
                     .map_err(|_| ()),
             );

@@ -1,7 +1,7 @@
-use crate::DirectService;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::{error, fmt};
+use tower_service::DirectService;
 //use tower_service::{NewService, Service};
 
 /// This type provides an implementation of a Tower
@@ -215,7 +215,7 @@ where
                         .map_err(Error::from_service_error)?;
                 } else {
                     self.service
-                        .poll_outstanding()
+                        .poll_service()
                         .map_err(Error::from_service_error)?;
                 }
             }

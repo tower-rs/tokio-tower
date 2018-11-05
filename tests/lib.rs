@@ -64,7 +64,7 @@ where
 
 use tokio::prelude::*;
 //use tower_service::Service;
-use tokio_tower::DirectService;
+use tower_service::DirectService;
 
 struct EchoService;
 impl DirectService<Request> for EchoService {
@@ -76,7 +76,7 @@ impl DirectService<Request> for EchoService {
         Ok(Async::Ready(()))
     }
 
-    fn poll_outstanding(&mut self) -> Result<Async<()>, Self::Error> {
+    fn poll_service(&mut self) -> Result<Async<()>, Self::Error> {
         Ok(Async::Ready(()))
     }
 

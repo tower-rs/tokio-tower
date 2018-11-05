@@ -1,9 +1,9 @@
-use crate::DirectService;
 use futures::stream::futures_unordered::FuturesUnordered;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::{error, fmt};
 //use tower_service::{NewService, Service};
+use tower_service::DirectService;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -199,7 +199,7 @@ where
                         .map_err(Error::from_service_error)?;
                 } else {
                     self.service
-                        .poll_outstanding()
+                        .poll_service()
                         .map_err(Error::from_service_error)?;
                 }
             }

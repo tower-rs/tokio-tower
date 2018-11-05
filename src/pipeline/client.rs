@@ -1,5 +1,3 @@
-use crate::DirectService;
-use crate::{balance, buffer};
 use futures::future;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
@@ -7,8 +5,10 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
 use tokio_executor::DefaultExecutor;
+use tower_balance;
+use tower_buffer;
 use tower_discover::{Discover, List};
-use tower_service::Service;
+use tower_service::{DirectService, Service};
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -31,9 +31,9 @@ where
     error: PhantomData<E>,
 }
 
-type BufferHandle<T, E, R> = buffer::Buffer<buffer::HandleTo<Client<T, E>, R>, R>;
+type BufferHandle<T, E, R> = tower_buffer::Buffer<tower_buffer::HandleTo<Client<T, E>, R>, R>;
 type PoolInner<D, Request> =
-    buffer::Buffer<balance::Balance<D, balance::choose::RoundRobin>, Request>;
+    tower_buffer::Buffer<tower_balance::Balance<D, tower_balance::choose::RoundRobin>, Request>;
 
 /// A handle to a pool of `Client` instances that share load such that issued requests are
 /// distributed among them as load increases. Requests are given to ready `Client`s in round-robin
@@ -76,13 +76,13 @@ where
     {
         let clients = clients.into_iter();
         future::lazy(move || {
-            buffer::Buffer::new(
-                balance::Balance::new(
+            tower_buffer::Buffer::new(
+                tower_balance::Balance::new(
                     List::new(clients.into_iter().map(move |c| {
-                        buffer::Buffer::new_direct(c, 0, &DefaultExecutor::current())
+                        tower_buffer::Buffer::new_direct(c, 0, &DefaultExecutor::current())
                             .unwrap_or_else(|_| unimplemented!())
                     })),
-                    balance::choose::RoundRobin::default(),
+                    tower_balance::choose::RoundRobin::default(),
                 ),
                 0,
                 &DefaultExecutor::current(),
@@ -280,7 +280,7 @@ where
         if let Some(mif) = self.max_in_flight {
             if self.in_flight + self.requests.len() >= mif {
                 // not enough request slots -- need to handle some outstanding
-                self.poll_outstanding()?;
+                self.poll_service()?;
 
                 if self.in_flight + self.requests.len() >= mif {
                     // that didn't help -- wait to be awoken again
@@ -291,7 +291,7 @@ where
         return Ok(Async::Ready(()));
     }
 
-    fn poll_outstanding(&mut self) -> Result<Async<()>, Self::Error> {
+    fn poll_service(&mut self) -> Result<Async<()>, Self::Error> {
         loop {
             // send more requests if we have them
             while let Some(req) = self.requests.pop_front() {
@@ -363,7 +363,7 @@ where
 
     fn poll_close(&mut self) -> Result<Async<()>, Self::Error> {
         self.finish = true;
-        self.poll_outstanding()
+        self.poll_service()
     }
 
     fn call(&mut self, req: T::SinkItem) -> Self::Future {

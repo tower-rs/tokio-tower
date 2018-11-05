@@ -2,8 +2,8 @@ use async_bincode::*;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::Client;
+use tower_service::DirectService;
 //use tower_service::Service;
-use tokio_tower::DirectService;
 use {PanicError, Request, Response};
 
 #[test]
@@ -49,7 +49,7 @@ fn it_works() {
 
             // continue to drive the service
             tokio::spawn(
-                future::poll_fn(move || tx.poll_outstanding())
+                future::poll_fn(move || tx.poll_service())
                     .map_err(PanicError::from)
                     .map_err(|_| ()),
             );
