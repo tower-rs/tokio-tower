@@ -31,35 +31,80 @@ where
     error: PhantomData<E>,
 }
 
-/// Construct a client handle that spreads requests round-robin across all the `Client` instances
-/// in `clients`.
-pub fn pool<I, T, E>(
-    clients: I,
-) -> impl Future<Item = buffer::Buffer<impl Service<T::SinkItem>, T::SinkItem>, Error = ()>
+/// A handle to a pool of `Client` instances that share load such that issued requests are
+/// distributed among them as load increases. Requests are given to ready `Client`s in round-robin
+/// order.
+pub struct Pool<S, Request>
 where
-    T: 'static,
-    T: Sink + Stream + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
-    E: From<Error<T>> + 'static + Send,
-    I: IntoIterator<Item = Client<T, E>>,
-    I::IntoIter: Send + 'static,
+    S: Service<Request>,
 {
-    let clients = clients.into_iter();
-    future::lazy(move || {
-        buffer::Buffer::new(
-            balance::Balance::new(
-                List::new(clients.into_iter().map(move |c| {
-                    buffer::Buffer::new_direct(c, 0, &DefaultExecutor::current())
-                        .unwrap_or_else(|_| unimplemented!())
-                })),
-                balance::choose::RoundRobin::default(),
-            ),
-            0,
-            &DefaultExecutor::current(),
-        )
-    })
-    .map_err(|_| ())
+    service: buffer::Buffer<S, Request>,
+}
+
+impl<S, Request> Pool<S, Request>
+where
+    S: Service<Request>,
+{
+    /// Construct a new `Pool` from a fixed set of clients.
+    ///
+    /// The returned future errors if there is no tokio executor available.
+    pub fn from_iter<I, T, E>(
+        clients: I,
+    ) -> impl Future<Item = Pool<impl Service<T::SinkItem>, T::SinkItem>, Error = ()>
+    where
+        T: 'static,
+        T: Sink + Stream + Send,
+        T::SinkItem: 'static + Send,
+        T::Item: 'static + Send,
+        E: From<Error<T>> + 'static + Send,
+        I: IntoIterator<Item = Client<T, E>>,
+        I::IntoIter: Send + 'static,
+    {
+        let clients = clients.into_iter();
+        future::lazy(move || {
+            buffer::Buffer::new(
+                balance::Balance::new(
+                    List::new(clients.into_iter().map(move |c| {
+                        buffer::Buffer::new_direct(c, 0, &DefaultExecutor::current())
+                            .unwrap_or_else(|_| unimplemented!())
+                    })),
+                    balance::choose::RoundRobin::default(),
+                ),
+                0,
+                &DefaultExecutor::current(),
+            )
+            .map(|b| Pool { service: b })
+        })
+        .map_err(|_| ())
+    }
+}
+
+impl<S, Request> Clone for Pool<S, Request>
+where
+    S: Service<Request>,
+{
+    fn clone(&self) -> Self {
+        Pool {
+            service: self.service.clone(),
+        }
+    }
+}
+
+impl<S, Request> Service<Request> for Pool<S, Request>
+where
+    S: Service<Request>,
+{
+    type Response = <buffer::Buffer<S, Request> as Service<Request>>::Response;
+    type Error = <buffer::Buffer<S, Request> as Service<Request>>::Error;
+    type Future = <buffer::Buffer<S, Request> as Service<Request>>::Future;
+
+    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+        self.service.poll_ready()
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        self.service.call(req)
+    }
 }
 
 /// An error that occurred while servicing a request.
