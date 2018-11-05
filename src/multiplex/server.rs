@@ -136,7 +136,7 @@ where
     ///
     /// If `limit` is `Some(n)`, at most `n` requests are allowed to be pending at any given point
     /// in time.
-    pub fn pipelined(transport: T, service: S, limit: Option<usize>) -> Self {
+    pub fn multiplexed(transport: T, service: S, limit: Option<usize>) -> Self {
         let cap = limit.unwrap_or(16);
         Server {
             responses: VecDeque::with_capacity(cap),
@@ -156,7 +156,7 @@ where
     /// manage requests on that transport. This is roughly equivalent to:
     ///
     /// ```rust,ignore
-    /// incoming.map(|t| Server::pipelined(t, service.new_service(), limit))
+    /// incoming.map(|t| Server::multiplexed(t, service.new_service(), limit))
     /// ```
     pub fn serve_on<TS, SS, E>(
         incoming: TS,
@@ -173,7 +173,7 @@ where
             service
                 .new_service()
                 .map_err(E::from)
-                .map(move |s| Server::pipelined(transport, s, limit))
+                .map(move |s| Server::multiplexed(transport, s, limit))
         })
     }
     */
