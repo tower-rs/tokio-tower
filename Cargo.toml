@@ -24,6 +24,7 @@ futures = "0.1"
 log = "0.4.1"
 rand = "0.5"
 tokio-timer = "0.2.4"
+tokio-executor = "0.1.5"
 indexmap = "1"
 
 [dev-dependencies]
@@ -34,7 +35,7 @@ async-bincode = "0.4"
 slab = "0.4"
 
 [patch.crates-io]
-tower-service = { git = "https://github.com/jonhoo/tower.git" }
-tower-discover = { git = "https://github.com/jonhoo/tower.git" }
-tower-balance = { git = "https://github.com/jonhoo/tower.git" }
-tower-buffer = { git = "https://github.com/jonhoo/tower.git" }
+tower-service = { git = "https://github.com/jonhoo/tower.git", branch = "flexible-disc-list" }
+tower-discover = { git = "https://github.com/jonhoo/tower.git", branch = "flexible-disc-list"  }
+tower-balance = { git = "https://github.com/jonhoo/tower.git", branch = "flexible-disc-list"  }
+tower-buffer = { git = "https://github.com/jonhoo/tower.git", branch = "flexible-disc-list"  }

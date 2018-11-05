@@ -1,10 +1,14 @@
 use crate::DirectService;
+use crate::{balance, buffer};
 use futures::future;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
+use tokio_executor::DefaultExecutor;
+use tower_discover::List;
+use tower_service::Service;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -25,6 +29,37 @@ where
 
     #[allow(unused)]
     error: PhantomData<E>,
+}
+
+/// Construct a client handle that spreads requests round-robin across all the `Client` instances
+/// in `clients`.
+pub fn pool<I, T, E>(
+    clients: I,
+) -> impl Future<Item = buffer::Buffer<impl Service<T::SinkItem>, T::SinkItem>, Error = ()>
+where
+    T: 'static,
+    T: Sink + Stream + Send,
+    T::SinkItem: 'static + Send,
+    T::Item: 'static + Send,
+    E: From<Error<T>> + 'static + Send,
+    I: IntoIterator<Item = Client<T, E>>,
+    I::IntoIter: Send + 'static,
+{
+    let clients = clients.into_iter();
+    future::lazy(move || {
+        buffer::Buffer::new(
+            balance::Balance::new(
+                List::new(clients.into_iter().map(move |c| {
+                    buffer::Buffer::new_direct(c, 0, &DefaultExecutor::current())
+                        .unwrap_or_else(|_| unimplemented!())
+                })),
+                balance::choose::RoundRobin::default(),
+            ),
+            0,
+            &DefaultExecutor::current(),
+        )
+    })
+    .map_err(|_| ())
 }
 
 /// An error that occurred while servicing a request.
@@ -162,13 +197,15 @@ impl<T, E> DirectService<T::SinkItem> for Client<T, E>
 where
     T: Sink + Stream,
     E: From<Error<T>>,
-    E: 'static,
-    T::SinkItem: 'static,
-    T::Item: 'static,
+    E: 'static + Send,
+    T::SinkItem: 'static + Send,
+    T::Item: 'static + Send,
 {
     type Response = T::Item;
     type Error = E;
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
+
+    // TODO: get rid of Box + Send bound here by using existential types
+    type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
         if let Some(mif) = self.max_in_flight {

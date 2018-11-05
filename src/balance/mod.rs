@@ -10,10 +10,10 @@ use rand::{rngs::SmallRng, SeedableRng};
 use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
-use tower_balance::choose;
 use tower_discover::Discover;
 use tower_service::Service;
 
+pub use tower_balance::choose;
 pub use tower_balance::choose::{Choose, Replicas, TooFew};
 pub use tower_balance::load::Load;
 pub use tower_balance::Error;

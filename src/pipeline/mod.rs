@@ -8,9 +8,10 @@
 //! Note: pipelining with the max number of in-flight requests set to 1 implies that for each
 //! request, the response must be received before sending another request on the same connection.
 
-mod client;
+/// Client bindings for a pipelined protocol.
+pub mod client;
 pub use self::client::Client;
-pub use self::client::Error as ClientError;
-mod server;
-pub use self::server::Error as ServerError;
+
+/// Server bindings for a pipelined protocol.
+pub mod server;
 pub use self::server::Server;
