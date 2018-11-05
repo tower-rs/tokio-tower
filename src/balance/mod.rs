@@ -2,6 +2,7 @@
 // mostly just lifted from
 // https://github.com/tower-rs/tower/tree/e46a1262633663b3be6b7f85538abc09d7d11ea7/tower-balance/src
 
+use crate::DirectService;
 use futures::{Async, Future, Poll};
 use indexmap::IndexMap;
 use rand;
@@ -12,7 +13,6 @@ use std::marker::PhantomData;
 use tower_balance::choose;
 use tower_discover::Discover;
 use tower_service::Service;
-use DirectService;
 
 pub use tower_balance::choose::{Choose, Replicas, TooFew};
 pub use tower_balance::load::Load;
@@ -162,7 +162,7 @@ where
 
         while let Async::Ready(change) = self.discover.poll().map_err(Error::Balance)? {
             match change {
-                Insert(key, mut svc) => {
+                Insert(key, svc) => {
                     // If the `Insert`ed service is a duplicate of a service already
                     // in the ready list, remove the ready service first. The new
                     // service will then be inserted into the not-ready list.

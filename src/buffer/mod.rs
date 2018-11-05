@@ -7,18 +7,17 @@
 //!
 //! This is a version of `tower-buffer` adapted to use `DirectService`.
 
+use crate::DirectService;
 use futures::future::Executor;
 use futures::sync::mpsc;
 use futures::sync::oneshot;
 use futures::{Async, Future, Poll, Stream};
-use tower_service::Service;
-use DirectService;
-
 use std::marker::PhantomData;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::{error, fmt};
+use tower_service::Service;
 
 /// Adds a buffer in front of an inner service.
 ///

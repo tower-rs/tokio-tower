@@ -1,6 +1,7 @@
 [package]
 name = "tokio-tower"
 version = "0.1.0"
+edition = "2018"
 
 description = "Bridging the protocol gap between Tokio and Tower"
 readme = "README.md"

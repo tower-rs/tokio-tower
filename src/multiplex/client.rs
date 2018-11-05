@@ -1,3 +1,4 @@
+use crate::DirectService;
 use futures::future;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
@@ -5,7 +6,6 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
 //use tower_service;
-use DirectService;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
@@ -17,10 +17,10 @@ pub trait TagStore<Request, Response> {
     type Tag: Eq;
 
     /// Assign a fresh tag to the given `Request`, and return that tag.
-    fn assign_tag(&mut self, &mut Request) -> Self::Tag;
+    fn assign_tag(&mut self, r: &mut Request) -> Self::Tag;
 
     /// Retire and return the tag contained in the given `Response`.
-    fn finish_tag(&mut self, &Response) -> Self::Tag;
+    fn finish_tag(&mut self, r: &Response) -> Self::Tag;
 }
 
 /// For a transport to be usable in a [`multiplex::Client`], it must be a sink for requests, a
