@@ -1,11 +1,11 @@
 use async_bincode::*;
+use crate::{EchoService, PanicError, Request, Response};
 use slab::Slab;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
 use tower_service::DirectService;
 //use tower_service::Service;
-use {EchoService, PanicError, Request, Response};
 
 pub(crate) struct SlabStore(Slab<()>);
 
@@ -42,7 +42,7 @@ fn integration() {
         .map(AsyncBincodeStream::from)
         .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
-        .map(|stream| Server::pipelined(stream, EchoService, None));
+        .map(|stream| Server::multiplexed(stream, EchoService, None));
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.spawn(

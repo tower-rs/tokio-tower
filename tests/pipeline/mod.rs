@@ -1,10 +1,10 @@
 use async_bincode::*;
+use crate::{EchoService, PanicError, Request, Response};
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::{Client, Server};
 use tower_service::DirectService;
 //use tower_service::Service;
-use {EchoService, PanicError, Request, Response};
 
 mod client;
 

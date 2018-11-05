@@ -1,12 +1,5 @@
-extern crate futures;
-extern crate serde;
-extern crate slab;
-extern crate tokio;
-extern crate tower_service;
 #[macro_use]
 extern crate serde_derive;
-extern crate async_bincode;
-extern crate tokio_tower;
 
 #[derive(Serialize, Deserialize)]
 pub struct Request {

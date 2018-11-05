@@ -1,10 +1,10 @@
 use async_bincode::*;
+use crate::{PanicError, Request, Response};
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::Client;
 use tower_service::DirectService;
 //use tower_service::Service;
-use {PanicError, Request, Response};
 
 #[test]
 fn it_works() {
