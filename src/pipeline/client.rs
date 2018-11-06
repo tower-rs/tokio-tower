@@ -8,7 +8,8 @@ use tokio_executor::DefaultExecutor;
 use tower_balance;
 use tower_buffer;
 use tower_discover::{Discover, List};
-use tower_service::{DirectService, Service};
+use tower_direct_service::DirectService;
+use tower_service::Service;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a

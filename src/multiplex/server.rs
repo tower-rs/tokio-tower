@@ -3,7 +3,7 @@ use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::{error, fmt};
 //use tower_service::{NewService, Service};
-use tower_service::DirectService;
+use tower_direct_service::DirectService;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a

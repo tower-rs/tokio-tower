@@ -1,7 +1,7 @@
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::{error, fmt};
-use tower_service::DirectService;
+use tower_direct_service::DirectService;
 //use tower_service::{NewService, Service};
 
 /// This type provides an implementation of a Tower

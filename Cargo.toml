@@ -21,6 +21,7 @@ tower-service = "0.1"
 tower-discover = "0.1"
 tower-balance = "0.1"
 tower-buffer = "0.1"
+tower-direct-service = "0.1"
 futures = "0.1"
 tokio-executor = "0.1.5"
 
@@ -33,6 +34,7 @@ slab = "0.4"
 
 [patch.crates-io]
 tower-service = { git = "https://github.com/jonhoo/tower.git", branch = "direct-service" }
+tower-direct-service = { git = "https://github.com/jonhoo/tower.git", branch = "direct-service" }
 tower-discover = { git = "https://github.com/jonhoo/tower.git", branch = "direct-service"  }
 tower-balance = { git = "https://github.com/jonhoo/tower.git", branch = "direct-service"  }
 tower-buffer = { git = "https://github.com/jonhoo/tower.git", branch = "direct-service"  }
