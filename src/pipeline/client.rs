@@ -4,12 +4,7 @@ use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
-use tokio_executor::DefaultExecutor;
-use tower_balance;
-use tower_buffer;
-use tower_discover::{Discover, List};
 use tower_direct_service::DirectService;
-use tower_service::Service;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -30,106 +25,6 @@ where
 
     #[allow(unused)]
     error: PhantomData<E>,
-}
-
-type BufferHandle<T, E, R> = tower_buffer::Buffer<tower_buffer::HandleTo<Client<T, E>, R>, R>;
-type PoolInner<D, Request> =
-    tower_buffer::Buffer<tower_balance::Balance<D, tower_balance::choose::RoundRobin>, Request>;
-
-/// A handle to a pool of `Client` instances that share load such that issued requests are
-/// distributed among them as load increases. Requests are given to ready `Client`s in round-robin
-/// order.
-pub struct Pool<T, D, E>
-where
-    T: Sink + Stream,
-    D: Discover<Service = BufferHandle<T, E, T::SinkItem>>,
-    E: From<Error<T>>,
-    E: 'static + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
-{
-    service: PoolInner<D, T::SinkItem>,
-}
-
-impl<T, D, E> Pool<T, D, E>
-where
-    T: Sink + Stream,
-    D: Discover<Service = BufferHandle<T, E, T::SinkItem>>,
-    E: From<Error<T>>,
-    E: 'static + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
-{
-    /// Construct a new `Pool` from a fixed set of clients.
-    ///
-    /// The returned future errors if there is no tokio executor available.
-    pub fn from_iter<I>(
-        clients: I,
-    ) -> impl Future<
-        Item = Pool<T, List<impl Iterator<Item = BufferHandle<T, E, T::SinkItem>>>, E>,
-        Error = (),
-    >
-    where
-        T: 'static + Send,
-        E: 'static + Send,
-        I: IntoIterator<Item = Client<T, E>>,
-        I::IntoIter: Send + 'static,
-    {
-        let clients = clients.into_iter();
-        future::lazy(move || {
-            tower_buffer::Buffer::new(
-                tower_balance::Balance::new(
-                    List::new(clients.into_iter().map(move |c| {
-                        tower_buffer::Buffer::new_direct(c, 0, &DefaultExecutor::current())
-                            .unwrap_or_else(|_| unimplemented!())
-                    })),
-                    tower_balance::choose::RoundRobin::default(),
-                ),
-                0,
-                &DefaultExecutor::current(),
-            )
-            .map(|b| Pool { service: b })
-        })
-        .map_err(|_| ())
-    }
-}
-
-impl<T, D, E> Clone for Pool<T, D, E>
-where
-    T: Sink + Stream,
-    D: Discover<Service = BufferHandle<T, E, T::SinkItem>>,
-    E: From<Error<T>>,
-    E: 'static + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
-{
-    fn clone(&self) -> Self {
-        Pool {
-            service: self.service.clone(),
-        }
-    }
-}
-
-impl<T, D, E> Service<T::SinkItem> for Pool<T, D, E>
-where
-    T: Sink + Stream,
-    D: Discover<Service = BufferHandle<T, E, T::SinkItem>>,
-    E: From<Error<T>>,
-    E: 'static + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
-{
-    type Response = <PoolInner<D, T::SinkItem> as Service<T::SinkItem>>::Response;
-    type Error = <PoolInner<D, T::SinkItem> as Service<T::SinkItem>>::Error;
-    type Future = <PoolInner<D, T::SinkItem> as Service<T::SinkItem>>::Future;
-
-    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
-        self.service.poll_ready()
-    }
-
-    fn call(&mut self, req: T::SinkItem) -> Self::Future {
-        self.service.call(req)
-    }
 }
 
 /// An error that occurred while servicing a request.
