@@ -57,7 +57,7 @@ where
 
 use tokio::prelude::*;
 //use tower_service::Service;
-use tower_service::DirectService;
+use tower_direct_service::DirectService;
 
 struct EchoService;
 impl DirectService<Request> for EchoService {

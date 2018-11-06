@@ -3,7 +3,7 @@ use crate::{EchoService, PanicError, Request, Response};
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::{Client, Server};
-use tower_service::DirectService;
+use tower_direct_service::DirectService;
 //use tower_service::Service;
 
 mod client;
