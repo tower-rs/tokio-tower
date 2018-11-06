@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
 use tokio_executor::DefaultExecutor;
-use tower_buffer::{Buffer, HandleTo};
+use tower_buffer::Buffer;
 use tower_direct_service::DirectService;
 use tower_service::NewService;
 
@@ -82,8 +82,8 @@ where
     <T::Transport as Stream>::Error: 'static + Send,
 {
     type Item = Buffer<
-        HandleTo<Client<T::Transport, Error<T::Transport>>, <T::Transport as Sink>::SinkItem>,
         <T::Transport as Sink>::SinkItem,
+        <Client<T::Transport, Error<T::Transport>> as DirectService<Request>>::Future,
     >;
     type Error = SpawnError<T::InitError>;
 
@@ -124,7 +124,10 @@ where
     type InitError = SpawnError<T::InitError>;
     type Error = tower_buffer::Error<Error<T::Transport>>;
     type Response = <T::Transport as Stream>::Item;
-    type Service = Buffer<HandleTo<Client<T::Transport, Error<T::Transport>>, Request>, Request>;
+    type Service = Buffer<
+        Request,
+        <Client<T::Transport, Error<T::Transport>> as DirectService<Request>>::Future,
+    >;
     type Future = NewSpawnedClientFuture<T, Request>;
 
     fn new_service(&self) -> Self::Future {
