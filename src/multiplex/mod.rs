@@ -11,11 +11,12 @@
 
 use futures::{Async, AsyncSink, Sink, Stream};
 
-mod client;
-pub use self::client::Error as ClientError;
+/// Client bindings for a multiplexed protocol.
+pub mod client;
 pub use self::client::{Client, TagStore, Transport};
-mod server;
-pub use self::server::Error as ServerError;
+
+/// Server bindings for a multiplexed protocol.
+pub mod server;
 pub use self::server::Server;
 
 /// A convenience wrapper that lets you take separate transport and tag store types and use them as
@@ -75,8 +76,9 @@ where
     }
 }
 
-impl<T, S> Transport for MultiplexTransport<T, S>
+impl<T, S> Transport<<T as Sink>::SinkItem> for MultiplexTransport<T, S>
 where
     T: Sink + Stream,
     S: TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
-{}
+{
+}

@@ -41,5 +41,67 @@
 #[macro_use]
 extern crate futures;
 
+use futures::{Future, IntoFuture, Sink, Stream};
+use std::rc::Rc;
+use std::sync::Arc;
+
+/// Creates new `Transport` (i.e., `Sink + Stream`) instances..
+///
+/// This is useful for cases where new transports must be produced to support a new client.
+pub trait NewTransport<Request> {
+    /// Error when a new transport could not be produced.
+    type InitError;
+
+    /// The `Sink + Stream` implementation this factory produces.
+    type Transport: Stream + Sink<SinkItem = Request>;
+
+    /// The `Future` that eventually produces `Self::Transport`.
+    type TransportFut: Future<Item = Self::Transport, Error = Self::InitError>;
+
+    /// Create and return a new transport asynchronously.
+    fn new_transport(&self) -> Self::TransportFut;
+}
+
+impl<F, R, E, T, Request> NewTransport<Request> for F
+where
+    F: Fn() -> R,
+    R: IntoFuture<Item = T, Error = E>,
+    T: Stream + Sink<SinkItem = Request>,
+{
+    type InitError = E;
+    type Transport = T;
+    type TransportFut = R::Future;
+
+    fn new_transport(&self) -> Self::TransportFut {
+        (*self)().into_future()
+    }
+}
+
+impl<T, Request> NewTransport<Request> for Arc<T>
+where
+    T: NewTransport<Request> + ?Sized,
+{
+    type InitError = T::InitError;
+    type Transport = T::Transport;
+    type TransportFut = T::TransportFut;
+
+    fn new_transport(&self) -> Self::TransportFut {
+        (**self).new_transport()
+    }
+}
+
+impl<T, Request> NewTransport<Request> for Rc<T>
+where
+    T: NewTransport<Request> + ?Sized,
+{
+    type InitError = T::InitError;
+    type Transport = T::Transport;
+    type TransportFut = T::TransportFut;
+
+    fn new_transport(&self) -> Self::TransportFut {
+        (**self).new_transport()
+    }
+}
+
 pub mod multiplex;
 pub mod pipeline;

@@ -1,10 +1,14 @@
+use crate::NewTransport;
 use futures::future;
 use futures::sync::oneshot;
-use futures::{Async, AsyncSink, Future, Sink, Stream};
+use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
+use tokio_executor::DefaultExecutor;
+use tower_buffer::{Buffer, HandleTo};
 use tower_direct_service::DirectService;
+use tower_service::NewService;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
@@ -25,9 +29,112 @@ pub trait TagStore<Request, Response> {
 /// For a transport to be usable in a [`multiplex::Client`], it must be a sink for requests, a
 /// stream of responses, and it must allow extracting tags from requests and responses so that the
 /// client can match up responses that arrive out-of-order.
-pub trait Transport:
-    Sink + Stream + TagStore<<Self as Sink>::SinkItem, <Self as Stream>::Item>
+pub trait Transport<Request>: Sink + Stream + TagStore<Request, <Self as Stream>::Item> {}
+
+/// A factory that makes new `Client` instances by creating new transports and wrapping them in
+/// fresh `Client`s.
+pub struct Maker<T> {
+    t_maker: T,
+    in_flight: Option<usize>,
+}
+
+impl<T> Maker<T> {
+    /// Make a new `Client` factory that uses the given `Transport` factory.
+    pub fn new(t: T) -> Self {
+        Maker {
+            t_maker: t,
+            in_flight: None,
+        }
+    }
+
+    /// Limit each new `Client` instance to `in_flight` pending requests.
+    pub fn with_limit(mut self, in_flight: usize) -> Self {
+        self.in_flight = Some(in_flight);
+        self
+    }
+}
+
+/// A `Future` that will resolve into a `Buffer<Client<T::Transport>>`.
+pub struct NewSpawnedClientFuture<T, Request>
+where
+    T: NewTransport<Request>,
 {
+    maker: Option<T::TransportFut>,
+    in_flight: Option<usize>,
+}
+
+/// A failure to spawn a new `Client`.
+pub enum SpawnError<E> {
+    /// The executor failed to spawn the `tower_buffer::Worker`.
+    SpawnFailed,
+
+    /// A new `Transport` could not be produced.
+    Inner(E),
+}
+
+impl<T, Request> Future for NewSpawnedClientFuture<T, Request>
+where
+    T: NewTransport<Request>,
+    T::Transport: 'static + Send + Transport<Request>,
+    <T::Transport as TagStore<<T::Transport as Sink>::SinkItem, <T::Transport as Stream>::Item>>::Tag: 'static + Send,
+    <T::Transport as Sink>::SinkItem: 'static + Send,
+    <T::Transport as Stream>::Item: 'static + Send,
+    <T::Transport as Sink>::SinkError: 'static + Send,
+    <T::Transport as Stream>::Error: 'static + Send,
+{
+    type Item = Buffer<
+        HandleTo<Client<T::Transport, Error<T::Transport>>, <T::Transport as Sink>::SinkItem>,
+        <T::Transport as Sink>::SinkItem,
+    >;
+    type Error = SpawnError<T::InitError>;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self.maker.take() {
+            None => unreachable!("poll called after future resolved"),
+            Some(mut fut) => match fut.poll().map_err(SpawnError::Inner)? {
+                Async::Ready(t) => {
+                    let c = if let Some(f) = self.in_flight {
+                        Client::with_limit(t, f)
+                    } else {
+                        Client::new(t)
+                    };
+
+                    Ok(Async::Ready(
+                        Buffer::new_direct(c, 0, &DefaultExecutor::current())
+                            .map_err(|_| SpawnError::SpawnFailed)?,
+                    ))
+                }
+                Async::NotReady => {
+                    self.maker = Some(fut);
+                    Ok(Async::NotReady)
+                }
+            },
+        }
+    }
+}
+
+impl<T, Request> NewService<Request> for Maker<T>
+where
+    T: NewTransport<Request>,
+    T::Transport: 'static + Send + Transport<Request>,
+    <T::Transport as TagStore<<T::Transport as Sink>::SinkItem, <T::Transport as Stream>::Item>>::Tag: 'static + Send,
+    <T::Transport as Sink>::SinkItem: 'static + Send,
+    <T::Transport as Stream>::Item: 'static + Send,
+    <T::Transport as Sink>::SinkError: 'static + Send,
+    <T::Transport as Stream>::Error: 'static + Send,
+{
+    type InitError = SpawnError<T::InitError>;
+    type Error = tower_buffer::Error<Error<T::Transport>>;
+    type Response = <T::Transport as Stream>::Item;
+    type Service = Buffer<HandleTo<Client<T::Transport, Error<T::Transport>>, Request>, Request>;
+    type Future = NewSpawnedClientFuture<T, Request>;
+
+    fn new_service(&self) -> Self::Future {
+        NewSpawnedClientFuture {
+            maker: Some(self.t_maker.new_transport()),
+            in_flight: self.in_flight.clone(),
+        }
+    }
 }
 
 /// This type provides an implementation of a Tower
@@ -37,7 +144,7 @@ pub trait Transport:
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
 pub struct Client<T, E>
 where
-    T: Transport,
+    T: Transport<<T as Sink>::SinkItem>,
 {
     requests: VecDeque<T::SinkItem>,
     responses: VecDeque<(T::Tag, oneshot::Sender<T::Item>)>,
@@ -147,7 +254,7 @@ where
 
 impl<T, E> Client<T, E>
 where
-    T: Transport,
+    T: Transport<<T as Sink>::SinkItem>,
     E: From<Error<T>>,
 {
     /// Construct a new [`Client`] over the given `transport` with no limit on the number of
@@ -184,7 +291,7 @@ where
 
 impl<T, E> DirectService<T::SinkItem> for Client<T, E>
 where
-    T: Transport,
+    T: Transport<<T as Sink>::SinkItem>,
     E: From<Error<T>>,
     E: Send + 'static,
     T::SinkItem: Send + 'static,
