@@ -14,7 +14,7 @@ use tower_service::NewService;
 // instead, we allow the user to choose their own identifier format.
 
 /// A transport capable of transporting tagged requests and responses must implement this
-/// interface in order to be used with a [`multiplex::Client`].
+/// interface in order to be used with a [`Client`].
 pub trait TagStore<Request, Response> {
     /// The type used for tags.
     type Tag: Eq;
@@ -26,12 +26,12 @@ pub trait TagStore<Request, Response> {
     fn finish_tag(&mut self, r: &Response) -> Self::Tag;
 }
 
-/// For a transport to be usable in a [`multiplex::Client`], it must be a sink for requests, a
+/// For a transport to be usable in a [`Client`], it must be a sink for requests, a
 /// stream of responses, and it must allow extracting tags from requests and responses so that the
 /// client can match up responses that arrive out-of-order.
 pub trait Transport<Request>: Sink + Stream + TagStore<Request, <Self as Stream>::Item> {}
 
-/// A factory that makes new `Client` instances by creating new transports and wrapping them in
+/// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
 pub struct Maker<T> {
     t_maker: T,

@@ -130,7 +130,7 @@ where
     /// Construct a new [`Server`] over the given `transport` that services requests using the
     /// given `service`.
     ///
-    /// Requests are passed to [`Service::call`] as they arrive, and responses are written back to
+    /// Requests are passed to `Service::call` as they arrive, and responses are written back to
     /// the underlying `transport` in the order that they complete. If a later request completes
     /// before an earlier request, its response is still sent immediately.
     ///

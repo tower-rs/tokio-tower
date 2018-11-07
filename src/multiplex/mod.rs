@@ -20,7 +20,7 @@ pub mod server;
 pub use self::server::Server;
 
 /// A convenience wrapper that lets you take separate transport and tag store types and use them as
-/// a single [`multiplex::Transport`].
+/// a single [`client::Transport`].
 pub struct MultiplexTransport<T, S> {
     transport: T,
     tagger: S,
