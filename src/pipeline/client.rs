@@ -31,16 +31,16 @@ where
     error: PhantomData<E>,
 }
 
-/// A factory that makes new `Client` instances by creating new transports and wrapping them in
+/// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
-pub struct ClientMaker<T> {
-    t_maker: T,
+pub struct ClientMaker<NT> {
+    t_maker: NT,
     in_flight: Option<usize>,
 }
 
-impl<T> ClientMaker<T> {
+impl<NT> ClientMaker<NT> {
     /// Make a new `Client` factory that uses the given transport factory.
-    pub fn new(t: T) -> Self {
+    pub fn new(t: NT) -> Self {
         ClientMaker {
             t_maker: t,
             in_flight: None,
@@ -55,11 +55,11 @@ impl<T> ClientMaker<T> {
 }
 
 /// A `Future` that will resolve into a `Buffer<Client<T::Transport>>`.
-pub struct NewSpawnedClientFuture<T, Request>
+pub struct NewSpawnedClientFuture<NT, Request>
 where
-    T: NewTransport<Request>,
+    NT: NewTransport<Request>,
 {
-    maker: Option<T::TransportFut>,
+    maker: Option<NT::TransportFut>,
     in_flight: Option<usize>,
 }
 
@@ -72,20 +72,20 @@ pub enum SpawnError<E> {
     Inner(E),
 }
 
-impl<T, Request> Future for NewSpawnedClientFuture<T, Request>
+impl<NT, Request> Future for NewSpawnedClientFuture<NT, Request>
 where
-    T: NewTransport<Request>,
-    T::Transport: 'static + Send,
-    <T::Transport as Sink>::SinkItem: 'static + Send,
-    <T::Transport as Stream>::Item: 'static + Send,
-    <T::Transport as Sink>::SinkError: 'static + Send,
-    <T::Transport as Stream>::Error: 'static + Send,
+    NT: NewTransport<Request>,
+    NT::Transport: 'static + Send,
+    <NT::Transport as Sink>::SinkItem: 'static + Send,
+    <NT::Transport as Stream>::Item: 'static + Send,
+    <NT::Transport as Sink>::SinkError: 'static + Send,
+    <NT::Transport as Stream>::Error: 'static + Send,
 {
     type Item = Buffer<
-        <T::Transport as Sink>::SinkItem,
-        <Client<T::Transport, Error<T::Transport>> as DirectService<Request>>::Future,
+        <NT::Transport as Sink>::SinkItem,
+        <Client<NT::Transport, Error<NT::Transport>> as DirectService<Request>>::Future,
     >;
-    type Error = SpawnError<T::InitError>;
+    type Error = SpawnError<NT::InitError>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self.maker.take() {
@@ -112,23 +112,23 @@ where
     }
 }
 
-impl<T, Request> NewService<Request> for ClientMaker<T>
+impl<NT, Request> NewService<Request> for ClientMaker<NT>
 where
-    T: NewTransport<Request>,
-    T::Transport: 'static + Send,
-    <T::Transport as Sink>::SinkItem: 'static + Send,
-    <T::Transport as Stream>::Item: 'static + Send,
-    <T::Transport as Sink>::SinkError: 'static + Send,
-    <T::Transport as Stream>::Error: 'static + Send,
+    NT: NewTransport<Request>,
+    NT::Transport: 'static + Send,
+    <NT::Transport as Sink>::SinkItem: 'static + Send,
+    <NT::Transport as Stream>::Item: 'static + Send,
+    <NT::Transport as Sink>::SinkError: 'static + Send,
+    <NT::Transport as Stream>::Error: 'static + Send,
 {
-    type InitError = SpawnError<T::InitError>;
-    type Error = tower_buffer::Error<Error<T::Transport>>;
-    type Response = <T::Transport as Stream>::Item;
+    type InitError = SpawnError<NT::InitError>;
+    type Error = tower_buffer::Error<Error<NT::Transport>>;
+    type Response = <NT::Transport as Stream>::Item;
     type Service = Buffer<
         Request,
-        <Client<T::Transport, Error<T::Transport>> as DirectService<Request>>::Future,
+        <Client<NT::Transport, Error<NT::Transport>> as DirectService<Request>>::Future,
     >;
-    type Future = NewSpawnedClientFuture<T, Request>;
+    type Future = NewSpawnedClientFuture<NT, Request>;
 
     fn new_service(&self) -> Self::Future {
         NewSpawnedClientFuture {

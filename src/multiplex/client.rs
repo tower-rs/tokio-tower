@@ -33,14 +33,14 @@ pub trait Transport<Request>: Sink + Stream + TagStore<Request, <Self as Stream>
 
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
-pub struct Maker<T> {
-    t_maker: T,
+pub struct Maker<NT> {
+    t_maker: NT,
     in_flight: Option<usize>,
 }
 
-impl<T> Maker<T> {
+impl<NT> Maker<NT> {
     /// Make a new `Client` factory that uses the given `Transport` factory.
-    pub fn new(t: T) -> Self {
+    pub fn new(t: NT) -> Self {
         Maker {
             t_maker: t,
             in_flight: None,
@@ -55,11 +55,11 @@ impl<T> Maker<T> {
 }
 
 /// A `Future` that will resolve into a `Buffer<Client<T::Transport>>`.
-pub struct NewSpawnedClientFuture<T, Request>
+pub struct NewSpawnedClientFuture<NT, Request>
 where
-    T: NewTransport<Request>,
+    NT: NewTransport<Request>,
 {
-    maker: Option<T::TransportFut>,
+    maker: Option<NT::TransportFut>,
     in_flight: Option<usize>,
 }
 
@@ -72,21 +72,24 @@ pub enum SpawnError<E> {
     Inner(E),
 }
 
-impl<T, Request> Future for NewSpawnedClientFuture<T, Request>
+impl<NT, Request> Future for NewSpawnedClientFuture<NT, Request>
 where
-    T: NewTransport<Request>,
-    T::Transport: 'static + Send + Transport<Request>,
-    <T::Transport as TagStore<<T::Transport as Sink>::SinkItem, <T::Transport as Stream>::Item>>::Tag: 'static + Send,
-    <T::Transport as Sink>::SinkItem: 'static + Send,
-    <T::Transport as Stream>::Item: 'static + Send,
-    <T::Transport as Sink>::SinkError: 'static + Send,
-    <T::Transport as Stream>::Error: 'static + Send,
+    NT: NewTransport<Request>,
+    NT::Transport: 'static + Send + Transport<Request>,
+    <NT::Transport as TagStore<
+        <NT::Transport as Sink>::SinkItem,
+        <NT::Transport as Stream>::Item,
+    >>::Tag: 'static + Send,
+    <NT::Transport as Sink>::SinkItem: 'static + Send,
+    <NT::Transport as Stream>::Item: 'static + Send,
+    <NT::Transport as Sink>::SinkError: 'static + Send,
+    <NT::Transport as Stream>::Error: 'static + Send,
 {
     type Item = Buffer<
-        <T::Transport as Sink>::SinkItem,
-        <Client<T::Transport, Error<T::Transport>> as DirectService<Request>>::Future,
+        <NT::Transport as Sink>::SinkItem,
+        <Client<NT::Transport, Error<NT::Transport>> as DirectService<Request>>::Future,
     >;
-    type Error = SpawnError<T::InitError>;
+    type Error = SpawnError<NT::InitError>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self.maker.take() {
@@ -113,21 +116,27 @@ where
     }
 }
 
-impl<T, Request> NewService<Request> for Maker<T>
+impl<NT, Request> NewService<Request> for Maker<NT>
 where
-    T: NewTransport<Request>,
-    T::Transport: 'static + Send + Transport<Request>,
-    <T::Transport as TagStore<<T::Transport as Sink>::SinkItem, <T::Transport as Stream>::Item>>::Tag: 'static + Send,
-    <T::Transport as Sink>::SinkItem: 'static + Send,
-    <T::Transport as Stream>::Item: 'static + Send,
-    <T::Transport as Sink>::SinkError: 'static + Send,
-    <T::Transport as Stream>::Error: 'static + Send,
+    NT: NewTransport<Request>,
+    NT::Transport: 'static + Send + Transport<Request>,
+    <NT::Transport as TagStore<
+        <NT::Transport as Sink>::SinkItem,
+        <NT::Transport as Stream>::Item,
+    >>::Tag: 'static + Send,
+    <NT::Transport as Sink>::SinkItem: 'static + Send,
+    <NT::Transport as Stream>::Item: 'static + Send,
+    <NT::Transport as Sink>::SinkError: 'static + Send,
+    <NT::Transport as Stream>::Error: 'static + Send,
 {
-    type InitError = SpawnError<T::InitError>;
-    type Error = tower_buffer::Error<Error<T::Transport>>;
-    type Response = <T::Transport as Stream>::Item;
-    type Service = Buffer<Request, <Client<T::Transport, Error<T::Transport>> as DirectService<Request>>::Future>;
-    type Future = NewSpawnedClientFuture<T, Request>;
+    type InitError = SpawnError<NT::InitError>;
+    type Error = tower_buffer::Error<Error<NT::Transport>>;
+    type Response = <NT::Transport as Stream>::Item;
+    type Service = Buffer<
+        Request,
+        <Client<NT::Transport, Error<NT::Transport>> as DirectService<Request>>::Future,
+    >;
+    type Future = NewSpawnedClientFuture<NT, Request>;
 
     fn new_service(&self) -> Self::Future {
         NewSpawnedClientFuture {
