@@ -64,6 +64,7 @@ where
 }
 
 /// A failure to spawn a new `Client`.
+#[derive(Debug)]
 pub enum SpawnError<E> {
     /// The executor failed to spawn the `tower_buffer::Worker`.
     SpawnFailed,
@@ -426,5 +427,37 @@ where
         self.requests.push_back(req);
         self.responses.push_back((id, tx));
         Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
+    }
+}
+
+// ===== impl SpawnError =====
+
+impl<T> fmt::Display for SpawnError<T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            SpawnError::SpawnFailed => write!(f, "error spawning multiplex client"),
+            SpawnError::Inner(ref te) => {
+                write!(f, "error making new multiplex transport: {:?}", te)
+            }
+        }
+    }
+}
+
+impl<T> error::Error for SpawnError<T>
+where
+    T: error::Error,
+{
+    fn cause(&self) -> Option<&error::Error> {
+        match *self {
+            SpawnError::SpawnFailed => None,
+            SpawnError::Inner(ref te) => Some(te),
+        }
+    }
+
+    fn description(&self) -> &str {
+        "error creating new multiplex client"
     }
 }
