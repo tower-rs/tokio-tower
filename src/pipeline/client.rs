@@ -6,9 +6,9 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
 use tokio_executor::DefaultExecutor;
-use tower_buffer::Buffer;
+use tower_buffer::{Buffer, DirectServiceRef};
 use tower_direct_service::DirectService;
-use tower_service::NewService;
+use tower_service::Service;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -33,16 +33,18 @@ where
 
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
-pub struct ClientMaker<NT> {
+pub struct Maker<NT, Request> {
     t_maker: NT,
+    _req: PhantomData<Request>,
     in_flight: Option<usize>,
 }
 
-impl<NT> ClientMaker<NT> {
+impl<NT, Request> Maker<NT, Request> {
     /// Make a new `Client` factory that uses the given transport factory.
     pub fn new(t: NT) -> Self {
-        ClientMaker {
+        Maker {
             t_maker: t,
+            _req: PhantomData,
             in_flight: None,
         }
     }
@@ -82,10 +84,7 @@ where
     <NT::Transport as Sink>::SinkError: 'static + Send,
     <NT::Transport as Stream>::Error: 'static + Send,
 {
-    type Item = Buffer<
-        <NT::Transport as Sink>::SinkItem,
-        <Client<NT::Transport, Error<NT::Transport>> as DirectService<Request>>::Future,
-    >;
+    type Item = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
     type Error = SpawnError<NT::InitError>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -113,29 +112,28 @@ where
     }
 }
 
-impl<NT, Request> NewService<Request> for ClientMaker<NT>
+impl<NT, Request> Service<()> for Maker<NT, Request>
 where
     NT: NewTransport<Request>,
     NT::Transport: 'static + Send,
-    <NT::Transport as Sink>::SinkItem: 'static + Send,
+    Request: 'static + Send,
     <NT::Transport as Stream>::Item: 'static + Send,
     <NT::Transport as Sink>::SinkError: 'static + Send,
     <NT::Transport as Stream>::Error: 'static + Send,
 {
-    type InitError = SpawnError<NT::InitError>;
-    type Error = tower_buffer::Error<Error<NT::Transport>>;
-    type Response = <NT::Transport as Stream>::Item;
-    type Service = Buffer<
-        Request,
-        <Client<NT::Transport, Error<NT::Transport>> as DirectService<Request>>::Future,
-    >;
+    type Error = SpawnError<NT::InitError>;
+    type Response = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
     type Future = NewSpawnedClientFuture<NT, Request>;
 
-    fn new_service(&self) -> Self::Future {
+    fn call(&mut self, _: ()) -> Self::Future {
         NewSpawnedClientFuture {
             maker: Some(self.t_maker.new_transport()),
             in_flight: self.in_flight.clone(),
         }
+    }
+
+    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
+        Ok(Async::Ready(()))
     }
 }
 
