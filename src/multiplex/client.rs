@@ -83,7 +83,7 @@ where
         <NT::Transport as Sink>::SinkItem,
         <NT::Transport as Stream>::Item,
     >>::Tag: 'static + Send,
-    <NT::Transport as Sink>::SinkItem: 'static + Send,
+    Request: 'static + Send,
     <NT::Transport as Stream>::Item: 'static + Send,
     <NT::Transport as Sink>::SinkError: 'static + Send,
     <NT::Transport as Stream>::Error: 'static + Send,
