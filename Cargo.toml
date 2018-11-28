@@ -18,8 +18,6 @@ license = "MIT"
 
 [dependencies]
 tower-service = "0.1"
-tower-discover = "0.1"
-tower-balance = "0.1"
 tower-buffer = "0.1"
 tower-direct-service = "0.1"
 futures = "0.1"
@@ -35,6 +33,4 @@ slab = "0.4"
 [patch.crates-io]
 tower-service = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer" }
 tower-direct-service = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer" }
-tower-discover = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer"  }
-tower-balance = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer"  }
 tower-buffer = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer"  }
