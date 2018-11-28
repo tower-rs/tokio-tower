@@ -14,7 +14,7 @@ repository = "https://github.com/jonhoo/tokio-tower.git"
 keywords = ["tokio", "tower", "asynchronous", "protocol", "transport"]
 categories = ["asynchronous", "network-programming"]
 
-license = "MIT/Apache-2.0"
+license = "MIT"
 
 [dependencies]
 tower-service = "0.1"
