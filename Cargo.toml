@@ -31,6 +31,6 @@ async-bincode = "0.4"
 slab = "0.4"
 
 [patch.crates-io]
-tower-service = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer" }
-tower-direct-service = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer" }
-tower-buffer = { git = "https://github.com/jonhoo/tower.git", branch = "bounded-buffer"  }
+tower-service = { git = "https://github.com/tower-rs/tower.git" }
+tower-direct-service = { git = "https://github.com/tower-rs/tower.git" }
+tower-buffer = { git = "https://github.com/tower-rs/tower.git" }
