@@ -1,5 +1,5 @@
-use async_bincode::*;
 use crate::{PanicError, Request, Response};
+use async_bincode::*;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::Client;
@@ -15,10 +15,7 @@ fn it_works() {
         .map(AsyncBincodeStream::from)
         .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
-        .map(|s| {
-            // need to limit to one-in-flight for poll_ready to be sufficient to drive Service
-            Client::with_limit(s, 1)
-        });
+        .map(Client::new);
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.spawn(

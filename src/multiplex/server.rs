@@ -24,7 +24,6 @@ where
     transport: T,
     service: S,
 
-    max_in_flight: Option<usize>,
     in_flight: usize,
     finish: bool,
 }
@@ -133,17 +132,12 @@ where
     /// Requests are passed to `Service::call` as they arrive, and responses are written back to
     /// the underlying `transport` in the order that they complete. If a later request completes
     /// before an earlier request, its response is still sent immediately.
-    ///
-    /// If `limit` is `Some(n)`, at most `n` requests are allowed to be pending at any given point
-    /// in time.
-    pub fn multiplexed(transport: T, service: S, limit: Option<usize>) -> Self {
-        let cap = limit.unwrap_or(16);
+    pub fn new(transport: T, service: S) -> Self {
         Server {
-            responses: VecDeque::with_capacity(cap),
+            responses: VecDeque::new(),
             pending: FuturesUnordered::new(),
             transport,
             service,
-            max_in_flight: limit,
             in_flight: 0,
             finish: false,
         }
@@ -248,15 +242,6 @@ where
                 return Ok(Async::NotReady);
             }
 
-            // we can't send any more, so see if there are more requests for us
-            if let Some(max) = self.max_in_flight {
-                if self.in_flight >= max {
-                    // we can't accept any more requests until we finish some responses
-                    return Ok(Async::NotReady);
-                }
-            }
-
-            // we are allowed to receive another request
             // is the service ready?
             try_ready!(self.service.poll_ready().map_err(Error::from_service_error));
 

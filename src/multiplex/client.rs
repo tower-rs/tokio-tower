@@ -1,5 +1,4 @@
 use crate::MakeTransport;
-use futures::future;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
@@ -36,7 +35,6 @@ pub trait Transport<Request>: Sink + Stream + TagStore<Request, <Self as Stream>
 pub struct Maker<NT, Request> {
     t_maker: NT,
     _req: PhantomData<Request>,
-    in_flight: Option<usize>,
 }
 
 impl<NT, Request> Maker<NT, Request> {
@@ -45,14 +43,7 @@ impl<NT, Request> Maker<NT, Request> {
         Maker {
             t_maker: t,
             _req: PhantomData,
-            in_flight: None,
         }
-    }
-
-    /// Limit each new `Client` instance to `in_flight` pending requests.
-    pub fn with_limit(mut self, in_flight: usize) -> Self {
-        self.in_flight = Some(in_flight);
-        self
     }
 }
 
@@ -62,7 +53,6 @@ where
     NT: MakeTransport<Target, Request>,
 {
     maker: Option<NT::Future>,
-    in_flight: Option<usize>,
 }
 
 /// A failure to spawn a new `Client`.
@@ -96,11 +86,7 @@ where
             None => unreachable!("poll called after future resolved"),
             Some(mut fut) => match fut.poll().map_err(SpawnError::Inner)? {
                 Async::Ready(t) => {
-                    let c = if let Some(f) = self.in_flight {
-                        Client::with_limit(t, f)
-                    } else {
-                        Client::new(t)
-                    };
+                    let c = Client::new(t);
 
                     Ok(Async::Ready(
                         Buffer::new_direct(c, 0, &DefaultExecutor::current())
@@ -133,7 +119,6 @@ where
     fn call(&mut self, target: Target) -> Self::Future {
         NewSpawnedClientFuture {
             maker: Some(self.t_maker.make_transport(target)),
-            in_flight: self.in_flight.clone(),
         }
     }
 
@@ -155,7 +140,6 @@ where
     responses: VecDeque<(T::Tag, oneshot::Sender<T::Item>)>,
     transport: T,
 
-    max_in_flight: Option<usize>,
     in_flight: usize,
     finish: bool,
 
@@ -269,24 +253,6 @@ where
             requests: VecDeque::default(),
             responses: VecDeque::default(),
             transport,
-            max_in_flight: None,
-            in_flight: 0,
-            error: PhantomData::<E>,
-            finish: false,
-        }
-    }
-
-    /// Construct a new [`Client`] over the given `transport` with a maxmimum limit on the number
-    /// of in-flight requests.
-    ///
-    /// Note that setting the limit to 1 implies that for each `Request`, the `Response` must be
-    /// received before another request is sent on the same transport.
-    pub fn with_limit(transport: T, max_in_flight: usize) -> Self {
-        Client {
-            requests: VecDeque::with_capacity(max_in_flight),
-            responses: VecDeque::with_capacity(max_in_flight),
-            transport,
-            max_in_flight: Some(max_in_flight),
             in_flight: 0,
             error: PhantomData::<E>,
             finish: false,
@@ -307,17 +273,7 @@ where
     type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
-        if let Some(mif) = self.max_in_flight {
-            if self.in_flight + self.requests.len() >= mif {
-                // not enough request slots -- need to handle some outstanding
-                self.poll_service()?;
-
-                if self.in_flight + self.requests.len() >= mif {
-                    // that didn't help -- wait to be awoken again
-                    return Ok(Async::NotReady);
-                }
-            }
-        }
+        // NOTE: it'd be great if we could poll_ready the Sink, but alas..
         return Ok(Async::Ready(()));
     }
 
@@ -409,18 +365,14 @@ where
     }
 
     fn call(&mut self, mut req: T::SinkItem) -> Self::Future {
-        if let Some(mif) = self.max_in_flight {
-            if self.in_flight + self.requests.len() >= mif {
-                return Box::new(future::err(E::from(Error::TransportFull)));
-            }
-        }
-
         assert!(!self.finish, "invoked call() after poll_close()");
 
         let (tx, rx) = oneshot::channel();
         let id = self.transport.assign_tag(&mut req);
         self.requests.push_back(req);
         self.responses.push_back((id, tx));
+
+        // TODO: one day, we'll use existentials here
         Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
     }
 }

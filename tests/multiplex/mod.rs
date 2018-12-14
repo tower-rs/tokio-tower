@@ -1,5 +1,5 @@
-use async_bincode::*;
 use crate::{EchoService, PanicError, Request, Response};
+use async_bincode::*;
 use slab::Slab;
 use tokio;
 use tokio::prelude::*;
@@ -42,7 +42,7 @@ fn integration() {
         .map(AsyncBincodeStream::from)
         .map(AsyncBincodeStream::for_async)
         .map_err(PanicError::from)
-        .map(|stream| Server::multiplexed(stream, EchoService, None));
+        .map(|stream| Server::new(stream, EchoService));
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     rt.spawn(
