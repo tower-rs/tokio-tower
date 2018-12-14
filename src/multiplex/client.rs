@@ -1,4 +1,4 @@
-use crate::NewTransport;
+use crate::MakeTransport;
 use futures::future;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
@@ -57,11 +57,11 @@ impl<NT, Request> Maker<NT, Request> {
 }
 
 /// A `Future` that will resolve into a `Buffer<Client<T::Transport>>`.
-pub struct NewSpawnedClientFuture<NT, Request>
+pub struct NewSpawnedClientFuture<NT, Target, Request>
 where
-    NT: NewTransport<Request>,
+    NT: MakeTransport<Target, Request>,
 {
-    maker: Option<NT::TransportFut>,
+    maker: Option<NT::Future>,
     in_flight: Option<usize>,
 }
 
@@ -75,9 +75,9 @@ pub enum SpawnError<E> {
     Inner(E),
 }
 
-impl<NT, Request> Future for NewSpawnedClientFuture<NT, Request>
+impl<NT, Target, Request> Future for NewSpawnedClientFuture<NT, Target, Request>
 where
-    NT: NewTransport<Request>,
+    NT: MakeTransport<Target, Request>,
     NT::Transport: 'static + Send + Transport<Request>,
     <NT::Transport as TagStore<
         <NT::Transport as Sink>::SinkItem,
@@ -89,7 +89,7 @@ where
     <NT::Transport as Stream>::Error: 'static + Send,
 {
     type Item = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
-    type Error = SpawnError<NT::InitError>;
+    type Error = SpawnError<NT::MakeError>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self.maker.take() {
@@ -116,9 +116,9 @@ where
     }
 }
 
-impl<NT, Request> Service<()> for Maker<NT, Request>
+impl<NT, Target, Request> Service<Target> for Maker<NT, Request>
 where
-    NT: NewTransport<Request>,
+    NT: MakeTransport<Target, Request>,
     NT::Transport: 'static + Send + Transport<Request>,
     <NT::Transport as TagStore<Request, <NT::Transport as Stream>::Item>>::Tag: 'static + Send,
     Request: 'static + Send,
@@ -126,19 +126,19 @@ where
     <NT::Transport as Sink>::SinkError: 'static + Send,
     <NT::Transport as Stream>::Error: 'static + Send,
 {
-    type Error = SpawnError<NT::InitError>;
+    type Error = SpawnError<NT::MakeError>;
     type Response = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
-    type Future = NewSpawnedClientFuture<NT, Request>;
+    type Future = NewSpawnedClientFuture<NT, Target, Request>;
 
-    fn call(&mut self, _: ()) -> Self::Future {
+    fn call(&mut self, target: Target) -> Self::Future {
         NewSpawnedClientFuture {
-            maker: Some(self.t_maker.new_transport()),
+            maker: Some(self.t_maker.make_transport(target)),
             in_flight: self.in_flight.clone(),
         }
     }
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        Ok(Async::Ready(()))
+        self.t_maker.poll_ready().map_err(SpawnError::Inner)
     }
 }
 

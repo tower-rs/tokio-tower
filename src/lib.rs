@@ -41,66 +41,76 @@
 #[macro_use]
 extern crate futures;
 
-use futures::{Future, IntoFuture, Sink, Stream};
-use std::rc::Rc;
-use std::sync::Arc;
+use futures::{Future, Poll, Sink, Stream};
+use tower_service::Service;
 
-/// Creates new `Transport` (i.e., `Sink + Stream`) instances..
+/// Creates new `Transport` (i.e., `Sink + Stream`) instances.
 ///
-/// This is useful for cases where new transports must be produced to support a new client.
-pub trait NewTransport<Request> {
-    /// Error when a new transport could not be produced.
-    type InitError;
+/// Acts as a transport factory. This is useful for cases where new `Sink + Stream`
+/// values must be produced.
+///
+/// This is essentially a trait alias for a `Service` of `Sink + Stream`s.
+pub trait MakeTransport<Target, Request>: self::sealed::Sealed<Target, Request> {
+    /// Errors produced when receiving from the transport
+    type Error;
 
-    /// The `Sink + Stream` implementation this factory produces.
-    type Transport: Stream + Sink<SinkItem = Request>;
+    /// Errors produced when sending to the transport
+    type SinkError;
 
-    /// The `Future` that eventually produces `Self::Transport`.
-    type TransportFut: Future<Item = Self::Transport, Error = Self::InitError>;
+    /// The `Sink + Stream` implementation created by this factory
+    type Transport: Stream<Error = Self::Error>
+        + Sink<SinkItem = Request, SinkError = Self::SinkError>;
+
+    /// Errors produced while building a transport.
+    type MakeError;
+
+    /// The future of the `Service` instance.
+    type Future: Future<Item = Self::Transport, Error = Self::MakeError>;
+
+    /// Returns `Ready` when the factory is able to create more transports.
+    ///
+    /// If the service is at capacity, then `NotReady` is returned and the task
+    /// is notified when the service becomes ready again. This function is
+    /// expected to be called while on a task.
+    ///
+    /// This is a **best effort** implementation. False positives are permitted.
+    /// It is permitted for the service to return `Ready` from a `poll_ready`
+    /// call and the next invocation of `make_transport` results in an error.
+    fn poll_ready(&mut self) -> Poll<(), Self::MakeError>;
 
     /// Create and return a new transport asynchronously.
-    fn new_transport(&self) -> Self::TransportFut;
+    fn make_transport(&mut self, target: Target) -> Self::Future;
 }
 
-impl<F, R, E, T, Request> NewTransport<Request> for F
+impl<M, T, Target, Request> self::sealed::Sealed<Target, Request> for M
 where
-    F: Fn() -> R,
-    R: IntoFuture<Item = T, Error = E>,
+    M: Service<Target, Response = T>,
     T: Stream + Sink<SinkItem = Request>,
 {
-    type InitError = E;
+}
+
+impl<M, T, Target, Request> MakeTransport<Target, Request> for M
+where
+    M: Service<Target, Response = T>,
+    T: Stream + Sink<SinkItem = Request>,
+{
+    type Error = T::Error;
+    type SinkError = T::SinkError;
     type Transport = T;
-    type TransportFut = R::Future;
+    type MakeError = M::Error;
+    type Future = M::Future;
 
-    fn new_transport(&self) -> Self::TransportFut {
-        (*self)().into_future()
+    fn poll_ready(&mut self) -> Poll<(), Self::MakeError> {
+        Service::poll_ready(self)
+    }
+
+    fn make_transport(&mut self, target: Target) -> Self::Future {
+        Service::call(self, target)
     }
 }
 
-impl<T, Request> NewTransport<Request> for Arc<T>
-where
-    T: NewTransport<Request> + ?Sized,
-{
-    type InitError = T::InitError;
-    type Transport = T::Transport;
-    type TransportFut = T::TransportFut;
-
-    fn new_transport(&self) -> Self::TransportFut {
-        (**self).new_transport()
-    }
-}
-
-impl<T, Request> NewTransport<Request> for Rc<T>
-where
-    T: NewTransport<Request> + ?Sized,
-{
-    type InitError = T::InitError;
-    type Transport = T::Transport;
-    type TransportFut = T::TransportFut;
-
-    fn new_transport(&self) -> Self::TransportFut {
-        (**self).new_transport()
-    }
+mod sealed {
+    pub trait Sealed<A, B> {}
 }
 
 pub mod multiplex;
