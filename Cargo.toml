@@ -17,7 +17,7 @@ categories = ["asynchronous", "network-programming"]
 license = "MIT"
 
 [dependencies]
-tower-service = "0.1"
+tower-service = "0.2"
 tower-buffer = "0.1"
 tower-direct-service = "0.1"
 futures = "0.1"
