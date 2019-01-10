@@ -51,6 +51,9 @@ use tower_service::Service;
 ///
 /// This is essentially a trait alias for a `Service` of `Sink + Stream`s.
 pub trait MakeTransport<Target, Request>: self::sealed::Sealed<Target, Request> {
+    /// Items produced by the transport
+    type Item;
+
     /// Errors produced when receiving from the transport
     type Error;
 
@@ -58,7 +61,7 @@ pub trait MakeTransport<Target, Request>: self::sealed::Sealed<Target, Request> 
     type SinkError;
 
     /// The `Sink + Stream` implementation created by this factory
-    type Transport: Stream<Error = Self::Error>
+    type Transport: Stream<Item = Self::Item, Error = Self::Error>
         + Sink<SinkItem = Request, SinkError = Self::SinkError>;
 
     /// Errors produced while building a transport.
@@ -94,6 +97,7 @@ where
     M: Service<Target, Response = T>,
     T: Stream + Sink<SinkItem = Request>,
 {
+    type Item = T::Item;
     type Error = T::Error;
     type SinkError = T::SinkError;
     type Transport = T;

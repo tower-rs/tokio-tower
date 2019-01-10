@@ -25,11 +25,6 @@ pub trait TagStore<Request, Response> {
     fn finish_tag(&mut self, r: &Response) -> Self::Tag;
 }
 
-/// For a transport to be usable in a [`Client`], it must be a sink for requests, a
-/// stream of responses, and it must allow extracting tags from requests and responses so that the
-/// client can match up responses that arrive out-of-order.
-pub trait Transport<Request>: Sink + Stream + TagStore<Request, <Self as Stream>::Item> {}
-
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
 pub struct Maker<NT, Request> {
@@ -38,7 +33,7 @@ pub struct Maker<NT, Request> {
 }
 
 impl<NT, Request> Maker<NT, Request> {
-    /// Make a new `Client` factory that uses the given `Transport` factory.
+    /// Make a new `Client` factory that uses the given `MakeTransport` factory.
     pub fn new(t: NT) -> Self {
         Maker {
             t_maker: t,
@@ -61,22 +56,19 @@ pub enum SpawnError<E> {
     /// The executor failed to spawn the `tower_buffer::Worker`.
     SpawnFailed,
 
-    /// A new `Transport` could not be produced.
+    /// A new transport could not be produced.
     Inner(E),
 }
 
 impl<NT, Target, Request> Future for NewSpawnedClientFuture<NT, Target, Request>
 where
     NT: MakeTransport<Target, Request>,
-    NT::Transport: 'static + Send + Transport<Request>,
-    <NT::Transport as TagStore<
-        <NT::Transport as Sink>::SinkItem,
-        <NT::Transport as Stream>::Item,
-    >>::Tag: 'static + Send,
+    NT::Transport: 'static + Send + TagStore<Request, NT::Item>,
+    <NT::Transport as TagStore<Request, NT::Item>>::Tag: 'static + Send,
     Request: 'static + Send,
-    <NT::Transport as Stream>::Item: 'static + Send,
-    <NT::Transport as Sink>::SinkError: 'static + Send,
-    <NT::Transport as Stream>::Error: 'static + Send,
+    NT::Item: 'static + Send,
+    NT::SinkError: 'static + Send,
+    NT::Error: 'static + Send,
 {
     type Item = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
     type Error = SpawnError<NT::MakeError>;
@@ -105,12 +97,12 @@ where
 impl<NT, Target, Request> Service<Target> for Maker<NT, Request>
 where
     NT: MakeTransport<Target, Request>,
-    NT::Transport: 'static + Send + Transport<Request>,
-    <NT::Transport as TagStore<Request, <NT::Transport as Stream>::Item>>::Tag: 'static + Send,
+    NT::Transport: 'static + Send + TagStore<Request, NT::Item>,
+    <NT::Transport as TagStore<Request, NT::Item>>::Tag: 'static + Send,
     Request: 'static + Send,
-    <NT::Transport as Stream>::Item: 'static + Send,
-    <NT::Transport as Sink>::SinkError: 'static + Send,
-    <NT::Transport as Stream>::Error: 'static + Send,
+    NT::Item: 'static + Send,
+    NT::SinkError: 'static + Send,
+    NT::Error: 'static + Send,
 {
     type Error = SpawnError<NT::MakeError>;
     type Response = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
@@ -134,7 +126,7 @@ where
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
 pub struct Client<T, E>
 where
-    T: Transport<<T as Sink>::SinkItem>,
+    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
 {
     requests: VecDeque<T::SinkItem>,
     responses: VecDeque<(T::Tag, oneshot::Sender<T::Item>)>,
@@ -243,7 +235,7 @@ where
 
 impl<T, E> Client<T, E>
 where
-    T: Transport<<T as Sink>::SinkItem>,
+    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
     E: From<Error<T>>,
 {
     /// Construct a new [`Client`] over the given `transport` with no limit on the number of
@@ -262,7 +254,7 @@ where
 
 impl<T, E> DirectService<T::SinkItem> for Client<T, E>
 where
-    T: Transport<<T as Sink>::SinkItem>,
+    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
     E: From<Error<T>>,
     E: Send + 'static,
     T::SinkItem: Send + 'static,

@@ -13,7 +13,7 @@ use futures::{Async, AsyncSink, Sink, Stream};
 
 /// Client bindings for a multiplexed protocol.
 pub mod client;
-pub use self::client::{Client, TagStore, Transport};
+pub use self::client::{Client, TagStore};
 
 /// Server bindings for a multiplexed protocol.
 pub mod server;
@@ -74,11 +74,4 @@ where
     fn finish_tag(&mut self, rsp: &<T as Stream>::Item) -> Self::Tag {
         self.tagger.finish_tag(rsp)
     }
-}
-
-impl<T, S> Transport<<T as Sink>::SinkItem> for MultiplexTransport<T, S>
-where
-    T: Sink + Stream,
-    S: TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
-{
 }
