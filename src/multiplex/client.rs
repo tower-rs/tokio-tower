@@ -67,8 +67,8 @@ where
     <NT::Transport as TagStore<Request, NT::Item>>::Tag: 'static + Send,
     Request: 'static + Send,
     NT::Item: 'static + Send,
-    NT::SinkError: 'static + Send,
-    NT::Error: 'static + Send,
+    NT::SinkError: 'static + Send + Sync,
+    NT::Error: 'static + Send + Sync,
 {
     type Item = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
     type Error = SpawnError<NT::MakeError>;
@@ -101,8 +101,8 @@ where
     <NT::Transport as TagStore<Request, NT::Item>>::Tag: 'static + Send,
     Request: 'static + Send,
     NT::Item: 'static + Send,
-    NT::SinkError: 'static + Send,
-    NT::Error: 'static + Send,
+    NT::SinkError: 'static + Send + Sync,
+    NT::Error: 'static + Send + Sync,
 {
     type Error = SpawnError<NT::MakeError>;
     type Response = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;

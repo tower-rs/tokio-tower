@@ -78,8 +78,8 @@ where
     NT::Transport: 'static + Send,
     <NT::Transport as Sink>::SinkItem: 'static + Send,
     <NT::Transport as Stream>::Item: 'static + Send,
-    <NT::Transport as Sink>::SinkError: 'static + Send,
-    <NT::Transport as Stream>::Error: 'static + Send,
+    <NT::Transport as Sink>::SinkError: 'static + Send + Sync,
+    <NT::Transport as Stream>::Error: 'static + Send + Sync,
 {
     type Item = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
     type Error = SpawnError<NT::MakeError>;
@@ -111,8 +111,8 @@ where
     NT::Transport: 'static + Send,
     Request: 'static + Send,
     <NT::Transport as Stream>::Item: 'static + Send,
-    <NT::Transport as Sink>::SinkError: 'static + Send,
-    <NT::Transport as Stream>::Error: 'static + Send,
+    <NT::Transport as Sink>::SinkError: 'static + Send + Sync,
+    <NT::Transport as Stream>::Error: 'static + Send + Sync,
 {
     type Error = SpawnError<NT::MakeError>;
     type Response = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
