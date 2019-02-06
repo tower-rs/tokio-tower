@@ -38,7 +38,8 @@ where
 {
     buf: Option<T::SinkItem>,
     transport: T,
-    requests: mpsc::Receiver<(T::SinkItem, oneshot::Sender<T::Item>)>,
+    // requests: mpsc::Receiver<(T::SinkItem, oneshot::Sender<T::Item>)>,
+    requests: VecDeque<T::SinkItem>,
     responses: VecDeque<oneshot::Sender<T::Item>>,
 }
 
@@ -254,7 +255,8 @@ where
         SharedTask::spawn(Worker {
             buf: None,
             transport,
-            requests: rx,
+            // requests: rx,
+            requests: VecDeque::new(),
             responses: VecDeque::new(),
         });
 
@@ -281,8 +283,11 @@ where
     type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+        Ok(().into())
+        /*
         self.requests.poll_ready()
             .map_err(|_| unimplemented!())
+            */
     }
 
     fn call(&mut self, req: T::SinkItem) -> Self::Future {
@@ -294,6 +299,11 @@ where
         if true {
             if let Some(mut lock) = self.shared_task.lock() {
                 lock.enter(|worker| {
+                    worker.requests.push_back(req);
+                    worker.responses.push_back(tx);
+                    worker.send_requests(true);
+
+                    /*
                     if worker.send_requests(false) {
                         worker.responses.push_back(tx);
 
@@ -310,13 +320,16 @@ where
                     } else {
                         requests.try_send((req, tx));
                     }
+                    */
                 });
             } else {
-                requests.try_send((req, tx));
+                panic!();
+                // requests.try_send((req, tx));
             }
         // Use old path
         } else {
-            requests.try_send((req, tx));
+            panic!();
+            // requests.try_send((req, tx));
         }
 
         Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
@@ -406,9 +419,15 @@ where
 {
     fn send_requests(&mut self, flush: bool) -> bool {
         loop {
-            let req = match self.buf.take() {
+            let req = match self.requests.pop_front() {
                 Some(req) => req,
                 None => {
+                    if flush {
+                        self.transport.poll_complete();
+                    }
+
+                    return true;
+                    /*
                     match self.requests.poll() {
                         Ok(Async::Ready(Some((req, resp)))) => {
                             self.responses.push_back(resp);
@@ -422,6 +441,7 @@ where
                             return true;
                         }
                     }
+                    */
                 }
             };
 
@@ -431,7 +451,7 @@ where
                     .map_err(|_| ())
                     .unwrap()
             {
-                self.buf = Some(req);
+                self.requests.push_front(req);
                 return false;
             }
         }

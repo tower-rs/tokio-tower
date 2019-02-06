@@ -87,7 +87,7 @@ impl<'a, T> Drop for LockGuard<'a, T> {
         let act = self.shared.inner.lock.swap(0, AcqRel);
 
         if act == POLLED {
-            self.shared.inner.task.notify();
+            unimplemented!();
         }
     }
 }
@@ -100,7 +100,7 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Poll<(), ()> {
-        self.inner.task.register();
+        // self.inner.task.register();
 
         // TODO: Handle panic
         let act = self.inner.lock.fetch_add(1, AcqRel);
@@ -121,7 +121,8 @@ where
 
 impl<T: Send> Notify for Inner<T> {
     fn notify(&self, _: usize) {
-        self.task.notify();
+        unimplemented!();
+        // self.task.notify();
     }
 }
 
