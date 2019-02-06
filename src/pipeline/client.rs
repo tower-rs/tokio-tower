@@ -291,7 +291,7 @@ where
         let requests = &mut self.requests;
 
         // Use shared_task fast path
-        if false {
+        if true {
             if let Some(mut lock) = self.shared_task.lock() {
                 lock.enter(|worker| {
                     if worker.send_requests(false) {
