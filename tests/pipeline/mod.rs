@@ -3,8 +3,8 @@ use crate::{EchoService, PanicError, Request, Response};
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::{Client, Server};
-use tower_direct_service::DirectService;
-//use tower_service::Service;
+use tower_service::Service;
+use tower_util::ServiceExt;
 
 mod client;
 
@@ -36,23 +36,22 @@ fn integration() {
     );
 
     let fut = tx.map_err(PanicError::from).and_then(
-        move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
-            let fut1 = tx.call(Request::new(1));
-            let fut2 = tx.call(Request::new(2));
-            let fut3 = tx.call(Request::new(3));
+        move |tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
+            // Send a sequence of incrementing requests
+            let futs = stream::unfold((1, tx), |(i, tx)| {
+                Some(tx.ready().and_then(move |mut tx| {
+                    Ok((tx.call(i), (i+1, tx)))
+                }))
+            });
 
-            // continue to drive the service
-            tokio::spawn(
-                future::poll_fn(move || tx.poll_service())
-                    .map_err(PanicError::from)
-                    .map_err(|_| ()),
-            );
-
-            fut1.inspect(|r| r.check(1))
-                .and_then(move |_| fut2)
-                .inspect(|r| r.check(2))
-                .and_then(move |_| fut3)
-                .inspect(|r| r.check(3))
+            futs
+                .take(3)
+                .enumerate()
+                .for_each(|(i, fut)| {
+                    fut
+                        .inspect(move |r| r.check(i as u32))
+                        .map(|_| ())
+                })
         },
     );
     assert!(rt.block_on(fut).is_ok());

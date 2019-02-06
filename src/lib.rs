@@ -117,5 +117,5 @@ mod sealed {
     pub trait Sealed<A, B> {}
 }
 
-pub mod multiplex;
+// pub mod multiplex;
 pub mod pipeline;

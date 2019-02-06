@@ -4,9 +4,9 @@ use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
-use tokio_executor::DefaultExecutor;
-use tower_buffer::{Buffer, DirectServiceRef};
-use tower_direct_service::DirectService;
+use tokio_executor::spawn;
+use tokio_sync::mpsc;
+use tower_buffer::{Buffer};
 use tower_service::Service;
 
 /// This type provides an implementation of a Tower
@@ -18,15 +18,25 @@ pub struct Client<T, E>
 where
     T: Sink + Stream,
 {
-    requests: VecDeque<T::SinkItem>,
-    responses: VecDeque<oneshot::Sender<T::Item>>,
-    transport: T,
+    requests: mpsc::Sender<(T::SinkItem, oneshot::Sender<T::Item>)>,
 
+    /*
     in_flight: usize,
     finish: bool,
+    */
 
     #[allow(unused)]
     error: PhantomData<E>,
+}
+
+struct Worker<T>
+where
+    T: Sink + Stream,
+{
+    buf: Option<T::SinkItem>,
+    transport: T,
+    requests: mpsc::Receiver<(T::SinkItem, oneshot::Sender<T::Item>)>,
+    responses: VecDeque<oneshot::Sender<T::Item>>,
 }
 
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
@@ -81,7 +91,7 @@ where
     <NT::Transport as Sink>::SinkError: 'static + Send + Sync,
     <NT::Transport as Stream>::Error: 'static + Send + Sync,
 {
-    type Item = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
+    type Item = Buffer<Client<NT::Transport, Error<NT::Transport>>, Request>;
     type Error = SpawnError<NT::MakeError>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -92,7 +102,7 @@ where
                     let c = Client::new(t);
 
                     Ok(Async::Ready(
-                        Buffer::new_direct(c, 0, &DefaultExecutor::current())
+                        Buffer::new(c, 0)
                             .map_err(|_| SpawnError::SpawnFailed)?,
                     ))
                 }
@@ -115,7 +125,7 @@ where
     <NT::Transport as Stream>::Error: 'static + Send + Sync,
 {
     type Error = SpawnError<NT::MakeError>;
-    type Response = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
+    type Response = Buffer<Client<NT::Transport, Error<NT::Transport>>, Request>;
     type Future = NewSpawnedClientFuture<NT, Target, Request>;
 
     fn call(&mut self, target: Target) -> Self::Future {
@@ -225,24 +235,33 @@ where
 
 impl<T, E> Client<T, E>
 where
-    T: Sink + Stream,
+    T: Sink + Stream + 'static + Send,
+    T::SinkItem: 'static + Send,
+    T::SinkError: 'static + Send,
+    T::Item: 'static + Send,
+    T::Error: 'static + Send,
     E: From<Error<T>>,
 {
     /// Construct a new [`Client`] over the given `transport` with no limit on the number of
     /// in-flight requests.
     pub fn new(transport: T) -> Self {
-        Client {
-            requests: VecDeque::default(),
-            responses: VecDeque::default(),
+        let (tx, rx) = mpsc::channel(1);
+
+        spawn(Worker {
+            buf: None,
             transport,
-            in_flight: 0,
+            requests: rx,
+            responses: VecDeque::new(),
+        });
+
+        Client {
+            requests: tx,
             error: PhantomData::<E>,
-            finish: false,
         }
     }
 }
 
-impl<T, E> DirectService<T::SinkItem> for Client<T, E>
+impl<T, E> Service<T::SinkItem> for Client<T, E>
 where
     T: Sink + Stream,
     E: From<Error<T>>,
@@ -257,10 +276,18 @@ where
     type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
-        // NOTE: it'd be great if we could poll_ready the Sink, but alas..
-        return Ok(Async::Ready(()));
+        self.requests.poll_ready()
+            .map_err(|_| unimplemented!())
     }
 
+    fn call(&mut self, req: T::SinkItem) -> Self::Future {
+        let (tx, rx) = oneshot::channel();
+        let res = self.requests.try_send((req, tx));
+
+        Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
+    }
+
+    /*
     fn poll_service(&mut self) -> Result<Async<()>, Self::Error> {
         loop {
             // send more requests if we have them
@@ -335,14 +362,61 @@ where
         self.finish = true;
         self.poll_service()
     }
+    */
+}
 
-    fn call(&mut self, req: T::SinkItem) -> Self::Future {
-        assert!(!self.finish, "invoked call() after poll_close()");
+impl<T> Worker<T>
+where
+    T: Sink + Stream,
+{
+    fn send_requests(&mut self) {
+        loop {
+            let req = match self.buf.take() {
+                Some(req) => req,
+                None => {
+                    match self.requests.poll() {
+                        Ok(Async::Ready(Some((req, resp)))) => {
+                            self.responses.push_back(resp);
+                            req
+                        }
+                        _ => {
+                            self.transport.poll_complete();
+                            return;
+                        }
+                    }
+                }
+            };
 
-        let (tx, rx) = oneshot::channel();
-        self.requests.push_back(req);
-        self.responses.push_back(tx);
-        Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
+            if let AsyncSink::NotReady(req) = self
+                .transport
+                    .start_send(req)
+                    .map_err(|_| ())
+                    .unwrap()
+            {
+                self.buf = Some(req);
+                return;
+            }
+        }
+    }
+
+    fn recv_responses(&mut self) {
+        while let Ok(Async::Ready(Some(resp))) = self.transport.poll() {
+            self.responses.pop_front().expect("nope").send(resp);
+        }
+    }
+}
+
+impl<T> Future for Worker<T>
+where
+    T: Sink + Stream,
+{
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<(), ()> {
+        self.send_requests();
+        self.recv_responses();
+        Ok(Async::NotReady)
     }
 }
 

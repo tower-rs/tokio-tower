@@ -3,8 +3,7 @@ use async_bincode::*;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::Client;
-use tower_direct_service::DirectService;
-//use tower_service::Service;
+use tower_service::Service;
 
 #[test]
 fn it_works() {
@@ -45,11 +44,13 @@ fn it_works() {
             let fut1 = tx.call(Request::new(1));
 
             // continue to drive the service
+            /*
             tokio::spawn(
                 future::poll_fn(move || tx.poll_service())
                     .map_err(PanicError::from)
                     .map_err(|_| ()),
             );
+            */
 
             fut1.inspect(|r| r.check(1))
         },

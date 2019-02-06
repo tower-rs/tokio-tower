@@ -1,8 +1,7 @@
 use futures::{Async, AsyncSink, Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::{error, fmt};
-use tower_direct_service::DirectService;
-//use tower_service::{NewService, Service};
+use tower_service::{Service};
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -12,7 +11,7 @@ use tower_direct_service::DirectService;
 pub struct Server<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
     responses: VecDeque<MaybeResponse<S::Response, S::Future>>,
     transport: T,
@@ -31,7 +30,7 @@ enum MaybeResponse<T, F> {
 pub enum Error<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
     /// The underlying transport failed to produce a request.
     BrokenTransportRecv(T::Error),
@@ -48,7 +47,7 @@ where
     T: Sink + Stream,
     T::SinkError: fmt::Display,
     T::Error: fmt::Display,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
     S::Error: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -65,7 +64,7 @@ where
     T: Sink + Stream,
     T::SinkError: fmt::Debug,
     T::Error: fmt::Debug,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
     S::Error: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -82,7 +81,7 @@ where
     T: Sink + Stream,
     T::SinkError: error::Error,
     T::Error: error::Error,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
     S::Error: error::Error,
 {
     fn cause(&self) -> Option<&error::Error> {
@@ -105,7 +104,7 @@ where
 impl<T, S> Error<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
     fn from_sink_error(e: T::SinkError) -> Self {
         Error::BrokenTransportSend(e)
@@ -123,7 +122,7 @@ where
 impl<T, S> Server<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
     /// Construct a new [`Server`] over the given `transport` that services requests using the
     /// given `service`.
@@ -174,7 +173,7 @@ where
 
 impl<T, S> Future for Server<T, S>
 where
-    S: DirectService<<T as Stream>::Item>,
+    S: Service<<T as Stream>::Item>,
     T: Sink<SinkItem = S::Response>,
     T: Stream,
 {
@@ -183,6 +182,7 @@ where
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         loop {
+            /*
             // first, if there are any pending requests, try to make service progress
             // TODO: only if any are ::Pending
             if !self.responses.is_empty() {
@@ -196,6 +196,7 @@ where
                         .map_err(Error::from_service_error)?;
                 }
             }
+            */
 
             // then, poll pending futures to see if we can send some responses
             while let Some(r) = self.responses.pop_front() {
