@@ -1,4 +1,5 @@
 use crate::MakeTransport;
+use crate::shared_task::SharedTask;
 use futures::sync::oneshot;
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
@@ -19,6 +20,8 @@ where
     T: Sink + Stream,
 {
     requests: mpsc::Sender<(T::SinkItem, oneshot::Sender<T::Item>)>,
+
+    shared_task: SharedTask<Worker<T>>,
 
     /*
     in_flight: usize,
@@ -247,7 +250,8 @@ where
     pub fn new(transport: T) -> Self {
         let (tx, rx) = mpsc::channel(1);
 
-        spawn(Worker {
+        let shared_task =
+        SharedTask::spawn(Worker {
             buf: None,
             transport,
             requests: rx,
@@ -256,6 +260,7 @@ where
 
         Client {
             requests: tx,
+            shared_task,
             error: PhantomData::<E>,
         }
     }
@@ -263,7 +268,7 @@ where
 
 impl<T, E> Service<T::SinkItem> for Client<T, E>
 where
-    T: Sink + Stream,
+    T: Sink + Stream + Send + 'static,
     E: From<Error<T>>,
     E: 'static + Send,
     T::SinkItem: 'static + Send,
@@ -282,7 +287,37 @@ where
 
     fn call(&mut self, req: T::SinkItem) -> Self::Future {
         let (tx, rx) = oneshot::channel();
-        let res = self.requests.try_send((req, tx));
+
+        let requests = &mut self.requests;
+
+        // Use shared_task fast path
+        if false {
+            if let Some(mut lock) = self.shared_task.lock() {
+                lock.enter(|worker| {
+                    if worker.send_requests(false) {
+                        worker.responses.push_back(tx);
+
+                        if let AsyncSink::NotReady(req) = worker
+                            .transport
+                                .start_send(req)
+                                .map_err(|_| ())
+                                .unwrap()
+                        {
+                            worker.buf = Some(req);
+                        } else {
+                            worker.transport.poll_complete();
+                        }
+                    } else {
+                        requests.try_send((req, tx));
+                    }
+                });
+            } else {
+                requests.try_send((req, tx));
+            }
+        // Use old path
+        } else {
+            requests.try_send((req, tx));
+        }
 
         Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
     }
@@ -369,7 +404,7 @@ impl<T> Worker<T>
 where
     T: Sink + Stream,
 {
-    fn send_requests(&mut self) {
+    fn send_requests(&mut self, flush: bool) -> bool {
         loop {
             let req = match self.buf.take() {
                 Some(req) => req,
@@ -380,8 +415,11 @@ where
                             req
                         }
                         _ => {
-                            self.transport.poll_complete();
-                            return;
+                            if flush {
+                                self.transport.poll_complete();
+                            }
+
+                            return true;
                         }
                     }
                 }
@@ -394,7 +432,7 @@ where
                     .unwrap()
             {
                 self.buf = Some(req);
-                return;
+                return false;
             }
         }
     }
@@ -414,7 +452,7 @@ where
     type Error = ();
 
     fn poll(&mut self) -> Poll<(), ()> {
-        self.send_requests();
+        self.send_requests(true);
         self.recv_responses();
         Ok(Async::NotReady)
     }

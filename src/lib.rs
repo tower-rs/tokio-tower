@@ -119,3 +119,5 @@ mod sealed {
 
 // pub mod multiplex;
 pub mod pipeline;
+
+mod shared_task;
