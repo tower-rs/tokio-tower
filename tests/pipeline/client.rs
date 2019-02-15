@@ -4,6 +4,7 @@ use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::Client;
 use tower_service::Service;
+use tower_util::ServiceExt;
 
 #[test]
 fn it_works() {
@@ -40,10 +41,12 @@ fn it_works() {
     );
 
     let fut = tx.map_err(PanicError::from).and_then(
-        move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
-            let fut1 = tx.call(Request::new(1));
-
-            fut1.inspect(|r| r.check(1))
+        move |tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
+            tx.ready().and_then(|mut tx| {
+                tx.call(Request::new(1))
+                    .inspect(|r| r.check(1))
+                    .map(move |_| tx)
+            })
         },
     );
     assert!(rt.block_on(fut).is_ok());

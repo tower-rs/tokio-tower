@@ -1,10 +1,10 @@
+use crate::mediator;
 use crate::ClientRequest;
 use crate::MakeTransport;
 use futures::{future, Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
-use tokio_sync;
 use tower_service::Service;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
@@ -45,7 +45,7 @@ impl<NT, Request> Maker<NT, Request> {
     // require Fn + Clone)
 }
 
-/// A `Future` that will resolve into a `Buffer<Client<T::Transport>>`.
+/// A `Future` that will resolve into a `Client<T::Transport>`.
 pub struct NewSpawnedClientFuture<NT, Target, Request>
 where
     NT: MakeTransport<Target, Request>,
@@ -124,27 +124,15 @@ pub struct Client<T, E>
 where
     T: Sink + Stream,
 {
-    send: tokio_sync::mpsc::Sender<ClientRequest<T>>,
+    mediator: mediator::Sender<ClientRequest<T>>,
     _error: PhantomData<E>,
-}
-
-impl<T, E> Clone for Client<T, E>
-where
-    T: Sink + Stream,
-{
-    fn clone(&self) -> Self {
-        Client {
-            send: self.send.clone(),
-            _error: self._error.clone(),
-        }
-    }
 }
 
 struct ClientInner<T, E>
 where
     T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
 {
-    requests: tokio_sync::mpsc::Receiver<ClientRequest<T>>,
+    mediator: mediator::Receiver<ClientRequest<T>>,
     responses: VecDeque<(T::Tag, tokio_sync::oneshot::Sender<T::Item>)>,
     waiting: Option<(T::Tag, ClientRequest<T>)>,
     transport: T,
@@ -274,10 +262,10 @@ where
     where
         F: FnOnce(E) + Send + 'static,
     {
-        let (tx, rx) = tokio_sync::mpsc::channel(1);
+        let (tx, rx) = mediator::new();
         tokio_executor::spawn(
             ClientInner {
-                requests: rx,
+                mediator: rx,
                 responses: Default::default(),
                 waiting: None,
                 transport,
@@ -288,7 +276,7 @@ where
             .map_err(move |e| on_service_error(e)),
         );
         Client {
-            send: tx,
+            mediator: tx,
             _error: PhantomData,
         }
     }
@@ -298,119 +286,126 @@ impl<T, E> Future for ClientInner<T, E>
 where
     T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
     E: From<Error<T>>,
+    E: 'static + Send,
+    T::SinkItem: 'static + Send,
+    T::Item: 'static + Send,
 {
     type Item = ();
     type Error = E;
 
-    fn poll(&mut self) -> Poll<(), Self::Error> {
-        loop {
-            // if Stream had a poll_ready, we could call that here to
-            // make sure there's room for at least one more request
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // if Stream had a poll_ready, we could call that here to
+        // make sure there's room for at least one more request
 
-            if let Some((id, ClientRequest { req, res })) = self.waiting.take() {
-                if let AsyncSink::NotReady(req) = self
-                    .transport
-                    .start_send(req)
-                    .map_err(Error::from_sink_error)?
-                {
-                    self.waiting = Some((id, ClientRequest { req, res }));
-                    return Ok(Async::NotReady);
-                } else {
-                    self.responses.push_back((id, res));
-                    self.in_flight += 1;
-                }
-            }
-
-            while self.waiting.is_none() {
-                // send more requests if we have them
-                match self.requests.poll().map_err(|_| unreachable!())? {
-                    Async::Ready(Some(ClientRequest { mut req, res })) => {
-                        let id = self.transport.assign_tag(&mut req);
-
-                        if let AsyncSink::NotReady(req) = self
-                            .transport
-                            .start_send(req)
-                            .map_err(Error::from_sink_error)?
-                        {
-                            assert!(self.waiting.is_none());
-                            self.waiting = Some((id, ClientRequest { req, res }));
-                        } else {
-                            self.responses.push_back((id, res));
-                            self.in_flight += 1;
-                        }
-                    }
-                    Async::Ready(None) => {
-                        self.finish = true;
-                        break;
-                    }
-                    Async::NotReady => {
-                        break;
-                    }
-                }
-            }
-
-            if self.in_flight != 0 {
-                // flush out any stuff we've sent in the past
-                // don't return on NotReady since we have to check for responses too
-                if self.finish && self.waiting.is_none() {
-                    // we're closing up shop!
-                    //
-                    // note that the check for requests.is_empty() is necessary, because
-                    // Sink::close() requires that we never call start_send ever again!
-                    //
-                    // close() implies poll_complete()
-                    //
-                    // FIXME: if close returns Ready, are we allowed to call close again?
-                    self.transport.close().map_err(Error::from_sink_error)?;
-                } else {
-                    self.transport
-                        .poll_complete()
-                        .map_err(Error::from_sink_error)?;
-                }
-            }
-
-            // and start looking for replies.
-            //
-            // note that we *could* have this just be a loop, but we don't want to poll the stream
-            // if we know there's nothing for it to produce.
-            while self.in_flight != 0 {
-                match try_ready!(self.transport.poll().map_err(Error::from_stream_error)) {
-                    Some(r) => {
-                        // find the appropriate response channel.
-                        // note that we do a _linear_ scan of the identifiers. this saves us from
-                        // keeping a HashMap around, and is _usually_ fast as long as the requests
-                        // that have been pending the longest are most likely to complete next.
-                        let id = self.transport.finish_tag(&r);
-                        let sender = self
-                            .responses
-                            .iter()
-                            .position(|&(ref rid, _)| rid == &id)
-                            .expect("got a request with no sender?");
-
-                        // this request just finished, which means it's _probably_ near the front
-                        // (i.e., was issued a while ago). so, for the swap needed for efficient
-                        // remove, we want to swap with something else that is close to the front.
-                        let sender = self.responses.swap_remove_front(sender).unwrap().1;
-
-                        // ignore send failures
-                        // the client may just no longer care about the response
-                        let _ = sender.send(r);
-                        self.in_flight -= 1;
-                    }
-                    None => {
-                        // the transport terminated while we were waiting for a response!
-                        // TODO: it'd be nice if we could return the transport here..
-                        return Err(E::from(Error::BrokenTransportRecv(None)));
-                    }
-                }
-            }
-
-            if self.finish && self.waiting.is_none() && self.in_flight == 0 {
-                // we're completely done once close() finishes!
-                try_ready!(self.transport.close().map_err(Error::from_sink_error));
-                return Ok(Async::Ready(()));
+        if let Some((id, ClientRequest { req, res })) = self.waiting.take() {
+            if let AsyncSink::NotReady(req) = self
+                .transport
+                .start_send(req)
+                .map_err(Error::from_sink_error)?
+            {
+                self.waiting = Some((id, ClientRequest { req, res }));
+            } else {
+                self.responses.push_back((id, res));
+                self.in_flight += 1;
             }
         }
+
+        while self.waiting.is_none() {
+            // send more requests if we have them
+            match self.mediator.try_recv() {
+                Async::Ready(Some(ClientRequest { mut req, res })) => {
+                    let id = self.transport.assign_tag(&mut req);
+
+                    if let AsyncSink::NotReady(req) = self
+                        .transport
+                        .start_send(req)
+                        .map_err(Error::from_sink_error)?
+                    {
+                        assert!(self.waiting.is_none());
+                        self.waiting = Some((id, ClientRequest { req, res }));
+                    } else {
+                        self.responses.push_back((id, res));
+                        self.in_flight += 1;
+                    }
+                }
+                Async::Ready(None) => {
+                    self.finish = true;
+                    break;
+                }
+                Async::NotReady => {
+                    break;
+                }
+            }
+        }
+
+        if self.in_flight != 0 {
+            // flush out any stuff we've sent in the past
+            // don't return on NotReady since we have to check for responses too
+            if self.finish && self.waiting.is_none() {
+                // we're closing up shop!
+                //
+                // note that the check for requests.is_empty() is necessary, because
+                // Sink::close() requires that we never call start_send ever again!
+                //
+                // close() implies poll_complete()
+                //
+                // FIXME: if close returns Ready, are we allowed to call close again?
+                self.transport.close().map_err(Error::from_sink_error)?;
+            } else {
+                self.transport
+                    .poll_complete()
+                    .map_err(Error::from_sink_error)?;
+            }
+        }
+
+        // and start looking for replies.
+        //
+        // note that we *could* have this just be a loop, but we don't want to poll the stream
+        // if we know there's nothing for it to produce.
+        while self.in_flight != 0 {
+            match try_ready!(self.transport.poll().map_err(Error::from_stream_error)) {
+                Some(r) => {
+                    // find the appropriate response channel.
+                    // note that we do a _linear_ scan of the identifiers. this saves us from
+                    // keeping a HashMap around, and is _usually_ fast as long as the requests
+                    // that have been pending the longest are most likely to complete next.
+                    let id = self.transport.finish_tag(&r);
+                    let sender = self
+                        .responses
+                        .iter()
+                        .position(|&(ref rid, _)| rid == &id)
+                        .expect("got a request with no sender?");
+
+                    // this request just finished, which means it's _probably_ near the front
+                    // (i.e., was issued a while ago). so, for the swap needed for efficient
+                    // remove, we want to swap with something else that is close to the front.
+                    let sender = self.responses.swap_remove_front(sender).unwrap().1;
+
+                    // ignore send failures
+                    // the client may just no longer care about the response
+                    let _ = sender.send(r);
+                    self.in_flight -= 1;
+                }
+                None => {
+                    // the transport terminated while we were waiting for a response!
+                    // TODO: it'd be nice if we could return the transport here..
+                    return Err(E::from(Error::BrokenTransportRecv(None)));
+                }
+            }
+        }
+
+        if self.finish && self.waiting.is_none() && self.in_flight == 0 {
+            // we're completely done once close() finishes!
+            try_ready!(self.transport.close().map_err(Error::from_sink_error));
+            return Ok(Async::Ready(()));
+        }
+
+        // to get here, we must have no requests in flight and have gotten a NotReady from
+        // self.mediator.try_recv or self.transport.start_send. we *could* also have messages
+        // waiting to be sent (transport.poll_complete), but if that's the case it must also have
+        // returned NotReady. so, at this point, we know that all of our subtasks are either done
+        // or have returned NotReady, so the right thing for us to do is return NotReady too!
+        Ok(Async::NotReady)
     }
 }
 
@@ -418,16 +413,18 @@ impl<T, E> Service<T::SinkItem> for Client<T, E>
 where
     T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
     E: From<Error<T>>,
-    E: Send + 'static,
-    T::SinkItem: Send + 'static,
-    T::Item: Send + 'static,
+    E: 'static + Send,
+    T::SinkItem: 'static + Send,
+    T::Item: 'static + Send,
 {
     type Response = T::Item;
     type Error = E;
+
+    // TODO: get rid of Box + Send bound here by using existential types
     type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
-        self.send
+        self.mediator
             .poll_ready()
             .map_err(|_| E::from(Error::ClientDropped))
     }
@@ -435,9 +432,11 @@ where
     fn call(&mut self, req: T::SinkItem) -> Self::Future {
         let (tx, rx) = tokio_sync::oneshot::channel();
         let req = ClientRequest { req: req, res: tx };
-        match self.send.try_send(req) {
-            Ok(()) => Box::new(rx.map_err(|_| E::from(Error::ClientDropped))),
-            Err(_) => Box::new(future::err(E::from(Error::TransportFull))),
+        match self.mediator.try_send(req) {
+            Ok(AsyncSink::Ready) => Box::new(rx.map_err(|_| E::from(Error::ClientDropped))),
+            Ok(AsyncSink::NotReady(_)) | Err(_) => {
+                Box::new(future::err(E::from(Error::TransportFull)))
+            }
         }
     }
 }

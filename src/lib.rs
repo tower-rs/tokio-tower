@@ -41,6 +41,8 @@
 #[macro_use]
 extern crate futures;
 
+mod mediator;
+
 use futures::{Future, Poll, Sink, Stream};
 use tower_service::Service;
 

@@ -21,6 +21,7 @@ tower-service = "0.2"
 futures = "0.1"
 tokio-executor = "0.1.5"
 tokio-sync = "0.1"
+crossbeam = "0.7"
 
 [dev-dependencies]
 tower-util = "0.1"
@@ -29,6 +30,7 @@ serde = "1.0"
 serde_derive = "1.0"
 async-bincode = "0.4"
 slab = "0.4"
+tokio-mock-task = "0.1"
 
 [patch.crates-io]
 tower-service = { git = "https://github.com/tower-rs/tower.git" }

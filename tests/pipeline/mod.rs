@@ -37,21 +37,6 @@ fn integration() {
 
     let fut = tx.map_err(PanicError::from).and_then(
         move |tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
-            // inject cross-traffic
-            for i in 10..20 {
-                tokio::spawn(
-                    future::loop_fn(tx.clone(), move |tx| {
-                        tx.ready().and_then(move |mut tx| {
-                            tx.call(Request::new(i)).map(move |r| {
-                                r.check(i);
-                                future::Loop::Continue(tx)
-                            })
-                        })
-                    })
-                    .map_err(|_| unreachable!()),
-                );
-            }
-
             tx.ready()
                 .and_then(|mut tx| {
                     let fut1 = tx.call(Request::new(1));
