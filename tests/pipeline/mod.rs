@@ -1,10 +1,10 @@
-use async_bincode::*;
 use crate::{EchoService, PanicError, Request, Response};
+use async_bincode::*;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::{Client, Server};
-use tower_direct_service::DirectService;
-//use tower_service::Service;
+use tower_service::Service;
+use tower_util::ServiceExt;
 
 mod client;
 
@@ -36,23 +36,40 @@ fn integration() {
     );
 
     let fut = tx.map_err(PanicError::from).and_then(
-        move |mut tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
-            let fut1 = tx.call(Request::new(1));
-            let fut2 = tx.call(Request::new(2));
-            let fut3 = tx.call(Request::new(3));
+        move |tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
+            // inject cross-traffic
+            for i in 10..20 {
+                tokio::spawn(
+                    future::loop_fn(tx.clone(), move |tx| {
+                        tx.ready().and_then(move |mut tx| {
+                            tx.call(Request::new(i)).map(move |r| {
+                                r.check(i);
+                                future::Loop::Continue(tx)
+                            })
+                        })
+                    })
+                    .map_err(|_| unreachable!()),
+                );
+            }
 
-            // continue to drive the service
-            tokio::spawn(
-                future::poll_fn(move || tx.poll_service())
-                    .map_err(PanicError::from)
-                    .map_err(|_| ()),
-            );
-
-            fut1.inspect(|r| r.check(1))
-                .and_then(move |_| fut2)
-                .inspect(|r| r.check(2))
-                .and_then(move |_| fut3)
-                .inspect(|r| r.check(3))
+            tx.ready()
+                .and_then(|mut tx| {
+                    let fut1 = tx.call(Request::new(1));
+                    tx.ready().map(move |tx| (tx, fut1))
+                })
+                .and_then(|(mut tx, fut1)| {
+                    let fut2 = tx.call(Request::new(2));
+                    tx.ready().map(move |tx| (tx, fut1, fut2))
+                })
+                .and_then(|(mut tx, fut1, fut2)| {
+                    let fut3 = tx.call(Request::new(3));
+                    fut1.inspect(|r| r.check(1))
+                        .and_then(move |_| fut2)
+                        .inspect(|r| r.check(2))
+                        .and_then(move |_| fut3)
+                        .inspect(|r| r.check(3))
+                        .map(move |_| tx)
+                })
         },
     );
     assert!(rt.block_on(fut).is_ok());

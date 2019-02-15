@@ -1,12 +1,10 @@
+use crate::ClientRequest;
 use crate::MakeTransport;
-use futures::sync::oneshot;
-use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
+use futures::{future, Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::{error, fmt};
-use tokio_executor::DefaultExecutor;
-use tower_buffer::{Buffer, DirectServiceRef};
-use tower_direct_service::DirectService;
+use tokio_sync;
 use tower_service::Service;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
@@ -40,6 +38,11 @@ impl<NT, Request> Maker<NT, Request> {
             _req: PhantomData,
         }
     }
+
+    // NOTE: it'd be *great* if the user had a way to specify a service error handler for all
+    // spawned services, but without https://github.com/rust-lang/rust/pull/49224 or
+    // https://github.com/rust-lang/rust/issues/29625 that's pretty tricky (unless we're willing to
+    // require Fn + Clone)
 }
 
 /// A `Future` that will resolve into a `Buffer<Client<T::Transport>>`.
@@ -70,21 +73,14 @@ where
     NT::SinkError: 'static + Send + Sync,
     NT::Error: 'static + Send + Sync,
 {
-    type Item = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
+    type Item = Client<NT::Transport, Error<NT::Transport>>;
     type Error = SpawnError<NT::MakeError>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self.maker.take() {
             None => unreachable!("poll called after future resolved"),
             Some(mut fut) => match fut.poll().map_err(SpawnError::Inner)? {
-                Async::Ready(t) => {
-                    let c = Client::new(t);
-
-                    Ok(Async::Ready(
-                        Buffer::new_direct(c, 0, &DefaultExecutor::current())
-                            .map_err(|_| SpawnError::SpawnFailed)?,
-                    ))
-                }
+                Async::Ready(t) => Ok(Async::Ready(Client::new(t))),
                 Async::NotReady => {
                     self.maker = Some(fut);
                     Ok(Async::NotReady)
@@ -105,7 +101,7 @@ where
     NT::Error: 'static + Send + Sync,
 {
     type Error = SpawnError<NT::MakeError>;
-    type Response = Buffer<DirectServiceRef<Client<NT::Transport, Error<NT::Transport>>>, Request>;
+    type Response = Client<NT::Transport, Error<NT::Transport>>;
     type Future = NewSpawnedClientFuture<NT, Target, Request>;
 
     fn call(&mut self, target: Target) -> Self::Future {
@@ -126,10 +122,31 @@ where
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
 pub struct Client<T, E>
 where
+    T: Sink + Stream,
+{
+    send: tokio_sync::mpsc::Sender<ClientRequest<T>>,
+    _error: PhantomData<E>,
+}
+
+impl<T, E> Clone for Client<T, E>
+where
+    T: Sink + Stream,
+{
+    fn clone(&self) -> Self {
+        Client {
+            send: self.send.clone(),
+            _error: self._error.clone(),
+        }
+    }
+}
+
+struct ClientInner<T, E>
+where
     T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
 {
-    requests: VecDeque<T::SinkItem>,
-    responses: VecDeque<(T::Tag, oneshot::Sender<T::Item>)>,
+    requests: tokio_sync::mpsc::Receiver<ClientRequest<T>>,
+    responses: VecDeque<(T::Tag, tokio_sync::oneshot::Sender<T::Item>)>,
+    waiting: Option<(T::Tag, ClientRequest<T>)>,
     transport: T,
 
     in_flight: usize,
@@ -235,60 +252,107 @@ where
 
 impl<T, E> Client<T, E>
 where
-    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
+    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item> + Send + 'static,
     E: From<Error<T>>,
+    E: 'static + Send,
+    T::SinkItem: 'static + Send,
+    T::Item: 'static + Send,
+    T::Tag: Send,
 {
-    /// Construct a new [`Client`] over the given `transport` with no limit on the number of
-    /// in-flight requests.
-    pub fn new(transport: T) -> Self {
+    /// Construct a new [`Client`] over the given `transport`.
+    ///
+    /// If the Client errors, the error is dropped when `new` is used -- use `with_error_handler`
+    /// to handle such an error explicitly.
+    pub fn new(transport: T) -> Self where {
+        Self::with_error_handler(transport, |_| {})
+    }
+
+    /// Construct a new [`Client`] over the given `transport`.
+    ///
+    /// If the `Client` errors, its error is passed to `on_service_error`.
+    pub fn with_error_handler<F>(transport: T, on_service_error: F) -> Self
+    where
+        F: FnOnce(E) + Send + 'static,
+    {
+        let (tx, rx) = tokio_sync::mpsc::channel(1);
+        tokio_executor::spawn(
+            ClientInner {
+                requests: rx,
+                responses: Default::default(),
+                waiting: None,
+                transport,
+                in_flight: 0,
+                error: PhantomData::<E>,
+                finish: false,
+            }
+            .map_err(move |e| on_service_error(e)),
+        );
         Client {
-            requests: VecDeque::default(),
-            responses: VecDeque::default(),
-            transport,
-            in_flight: 0,
-            error: PhantomData::<E>,
-            finish: false,
+            send: tx,
+            _error: PhantomData,
         }
     }
 }
 
-impl<T, E> DirectService<T::SinkItem> for Client<T, E>
+impl<T, E> Future for ClientInner<T, E>
 where
     T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
     E: From<Error<T>>,
-    E: Send + 'static,
-    T::SinkItem: Send + 'static,
-    T::Item: Send + 'static,
 {
-    type Response = T::Item;
+    type Item = ();
     type Error = E;
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
 
-    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
-        // NOTE: it'd be great if we could poll_ready the Sink, but alas..
-        return Ok(Async::Ready(()));
-    }
-
-    fn poll_service(&mut self) -> Result<Async<()>, Self::Error> {
+    fn poll(&mut self) -> Poll<(), Self::Error> {
         loop {
-            // send more requests if we have them
-            while let Some(req) = self.requests.pop_front() {
+            // if Stream had a poll_ready, we could call that here to
+            // make sure there's room for at least one more request
+
+            if let Some((id, ClientRequest { req, res })) = self.waiting.take() {
                 if let AsyncSink::NotReady(req) = self
                     .transport
                     .start_send(req)
                     .map_err(Error::from_sink_error)?
                 {
-                    self.requests.push_front(req);
-                    break;
+                    self.waiting = Some((id, ClientRequest { req, res }));
+                    return Ok(Async::NotReady);
                 } else {
+                    self.responses.push_back((id, res));
                     self.in_flight += 1;
+                }
+            }
+
+            while self.waiting.is_none() {
+                // send more requests if we have them
+                match self.requests.poll().map_err(|_| unreachable!())? {
+                    Async::Ready(Some(ClientRequest { mut req, res })) => {
+                        let id = self.transport.assign_tag(&mut req);
+
+                        if let AsyncSink::NotReady(req) = self
+                            .transport
+                            .start_send(req)
+                            .map_err(Error::from_sink_error)?
+                        {
+                            assert!(self.waiting.is_none());
+                            self.waiting = Some((id, ClientRequest { req, res }));
+                        } else {
+                            self.responses.push_back((id, res));
+                            self.in_flight += 1;
+                        }
+                    }
+                    Async::Ready(None) => {
+                        self.finish = true;
+                        break;
+                    }
+                    Async::NotReady => {
+                        break;
+                    }
                 }
             }
 
             if self.in_flight != 0 {
                 // flush out any stuff we've sent in the past
                 // don't return on NotReady since we have to check for responses too
-                if self.finish && self.requests.is_empty() {
+                if self.finish && self.waiting.is_none() {
                     // we're closing up shop!
                     //
                     // note that the check for requests.is_empty() is necessary, because
@@ -341,31 +405,40 @@ where
                 }
             }
 
-            if self.requests.is_empty() && self.in_flight == 0 {
-                if self.finish {
-                    // we're completely done once close() finishes!
-                    try_ready!(self.transport.close().map_err(Error::from_sink_error));
-                }
+            if self.finish && self.waiting.is_none() && self.in_flight == 0 {
+                // we're completely done once close() finishes!
+                try_ready!(self.transport.close().map_err(Error::from_sink_error));
                 return Ok(Async::Ready(()));
             }
         }
     }
+}
 
-    fn poll_close(&mut self) -> Result<Async<()>, Self::Error> {
-        self.finish = true;
-        self.poll_service()
+impl<T, E> Service<T::SinkItem> for Client<T, E>
+where
+    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
+    E: From<Error<T>>,
+    E: Send + 'static,
+    T::SinkItem: Send + 'static,
+    T::Item: Send + 'static,
+{
+    type Response = T::Item;
+    type Error = E;
+    type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
+
+    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+        self.send
+            .poll_ready()
+            .map_err(|_| E::from(Error::ClientDropped))
     }
 
-    fn call(&mut self, mut req: T::SinkItem) -> Self::Future {
-        assert!(!self.finish, "invoked call() after poll_close()");
-
-        let (tx, rx) = oneshot::channel();
-        let id = self.transport.assign_tag(&mut req);
-        self.requests.push_back(req);
-        self.responses.push_back((id, tx));
-
-        // TODO: one day, we'll use existentials here
-        Box::new(rx.map_err(|_| E::from(Error::ClientDropped)))
+    fn call(&mut self, req: T::SinkItem) -> Self::Future {
+        let (tx, rx) = tokio_sync::oneshot::channel();
+        let req = ClientRequest { req: req, res: tx };
+        match self.send.try_send(req) {
+            Ok(()) => Box::new(rx.map_err(|_| E::from(Error::ClientDropped))),
+            Err(_) => Box::new(future::err(E::from(Error::TransportFull))),
+        }
     }
 }
 

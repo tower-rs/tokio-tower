@@ -44,6 +44,14 @@ extern crate futures;
 use futures::{Future, Poll, Sink, Stream};
 use tower_service::Service;
 
+struct ClientRequest<T>
+where
+    T: Sink + Stream,
+{
+    req: T::SinkItem,
+    res: tokio_sync::oneshot::Sender<T::Item>,
+}
+
 /// Creates new `Transport` (i.e., `Sink + Stream`) instances.
 ///
 /// Acts as a transport factory. This is useful for cases where new `Sink + Stream`

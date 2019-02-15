@@ -18,12 +18,12 @@ license = "MIT"
 
 [dependencies]
 tower-service = "0.2"
-tower-buffer = "0.1"
-tower-direct-service = "0.1"
 futures = "0.1"
 tokio-executor = "0.1.5"
+tokio-sync = "0.1"
 
 [dev-dependencies]
+tower-util = "0.1"
 tokio = "0.1"
 serde = "1.0"
 serde_derive = "1.0"
@@ -32,5 +32,4 @@ slab = "0.4"
 
 [patch.crates-io]
 tower-service = { git = "https://github.com/tower-rs/tower.git" }
-tower-direct-service = { git = "https://github.com/tower-rs/tower.git" }
-tower-buffer = { git = "https://github.com/tower-rs/tower.git" }
+tower-util = { git = "https://github.com/tower-rs/tower.git" }
