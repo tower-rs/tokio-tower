@@ -1,9 +1,7 @@
-use futures::stream::futures_unordered::FuturesUnordered;
+use futures::stream::FuturesUnordered;
 use futures::{Async, AsyncSink, Future, Sink, Stream};
-use std::collections::VecDeque;
 use std::{error, fmt};
-//use tower_service::{NewService, Service};
-use tower_direct_service::DirectService;
+use tower_service::Service;
 
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
@@ -17,9 +15,9 @@ use tower_direct_service::DirectService;
 pub struct Server<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
-    responses: VecDeque<S::Response>,
+    waiting: Option<S::Response>,
     pending: FuturesUnordered<S::Future>,
     transport: T,
     service: S,
@@ -32,7 +30,7 @@ where
 pub enum Error<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
     /// The underlying transport failed to produce a request.
     BrokenTransportRecv(T::Error),
@@ -49,7 +47,7 @@ where
     T: Sink + Stream,
     T::SinkError: fmt::Display,
     T::Error: fmt::Display,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
     S::Error: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -66,7 +64,7 @@ where
     T: Sink + Stream,
     T::SinkError: fmt::Debug,
     T::Error: fmt::Debug,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
     S::Error: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -83,7 +81,7 @@ where
     T: Sink + Stream,
     T::SinkError: error::Error,
     T::Error: error::Error,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
     S::Error: error::Error,
 {
     fn cause(&self) -> Option<&error::Error> {
@@ -106,7 +104,7 @@ where
 impl<T, S> Error<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
     fn from_sink_error(e: T::SinkError) -> Self {
         Error::BrokenTransportSend(e)
@@ -124,7 +122,7 @@ where
 impl<T, S> Server<T, S>
 where
     T: Sink + Stream,
-    S: DirectService<T::Item>,
+    S: Service<T::Item>,
 {
     /// Construct a new [`Server`] over the given `transport` that services requests using the
     /// given `service`.
@@ -134,7 +132,7 @@ where
     /// before an earlier request, its response is still sent immediately.
     pub fn new(transport: T, service: S) -> Self {
         Server {
-            responses: VecDeque::new(),
+            waiting: None,
             pending: FuturesUnordered::new(),
             transport,
             service,
@@ -175,7 +173,7 @@ where
 
 impl<T, S> Future for Server<T, S>
 where
-    S: DirectService<<T as Stream>::Item>,
+    S: Service<<T as Stream>::Item>,
     T: Sink<SinkItem = S::Response>,
     T: Stream,
 {
@@ -184,42 +182,35 @@ where
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         loop {
-            // first, if there are any pending requests, try to make service progress
-            // TODO: only if any are ::Pending
-            if !self.pending.is_empty() {
-                if self.finish {
-                    self.service
-                        .poll_close()
-                        .map_err(Error::from_service_error)?;
-                } else {
-                    self.service
-                        .poll_service()
-                        .map_err(Error::from_service_error)?;
-                }
-            }
-
-            // first, poll pending futures to see if any have produced responses
-            loop {
-                match self.pending.poll().map_err(Error::from_service_error)? {
-                    Async::Ready(Some(rsp)) => {
-                        self.responses.push_back(rsp);
-                    }
-                    _ => break,
-                }
-            }
-
-            // next, try to send any responses we have, but haven't sent yet
-            while let Some(rsp) = self.responses.pop_front() {
-                // try to send the request!
+            // first, if we have a response ready to send, try to send it
+            if let Some(rsp) = self.waiting.take() {
                 if let AsyncSink::NotReady(rsp) = self
                     .transport
                     .start_send(rsp)
                     .map_err(Error::from_sink_error)?
                 {
-                    self.responses.push_front(rsp);
-                    break;
+                    self.waiting = Some(rsp);
                 } else {
                     self.in_flight -= 1;
+                }
+            }
+
+            // then, poll pending futures to see if any have produced responses
+            while self.waiting.is_none() {
+                match self.pending.poll().map_err(Error::from_service_error)? {
+                    Async::Ready(Some(rsp)) => {
+                        // try to send the response!
+                        if let AsyncSink::NotReady(rsp) = self
+                            .transport
+                            .start_send(rsp)
+                            .map_err(Error::from_sink_error)?
+                        {
+                            self.waiting = Some(rsp);
+                        } else {
+                            self.in_flight -= 1;
+                        }
+                    }
+                    _ => break,
                 }
             }
 
@@ -229,7 +220,7 @@ where
                 .poll_complete()
                 .map_err(Error::from_sink_error)?
             {
-                if self.finish && self.pending.is_empty() && self.responses.is_empty() {
+                if self.finish && self.waiting.is_none() && self.pending.is_empty() {
                     // there are no more requests
                     // and we've finished all the work!
                     return Ok(Async::Ready(()));
