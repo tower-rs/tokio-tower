@@ -4,8 +4,8 @@ use slab::Slab;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
-use tower_service::Service;
-use tower_util::ServiceExt;
+use tower::util::ServiceExt;
+use tower::Service;
 
 pub(crate) struct SlabStore(Slab<()>);
 

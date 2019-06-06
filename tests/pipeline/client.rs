@@ -3,8 +3,8 @@ use async_bincode::*;
 use tokio;
 use tokio::prelude::*;
 use tokio_tower::pipeline::Client;
-use tower_service::Service;
-use tower_util::ServiceExt;
+use tower::util::ServiceExt;
+use tower::Service;
 
 #[test]
 fn it_works() {

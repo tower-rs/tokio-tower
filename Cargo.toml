@@ -1,6 +1,6 @@
 [package]
 name = "tokio-tower"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
 
 description = "Bridging the protocol gap between Tokio and Tower"
@@ -24,6 +24,7 @@ tokio-sync = "0.1"
 crossbeam = "0.7"
 
 [dev-dependencies]
+tower = "0.1"
 tower-util = "0.1"
 tokio = "0.1"
 serde = "1.0"
@@ -31,7 +32,3 @@ serde_derive = "1.0"
 async-bincode = "0.4"
 slab = "0.4"
 tokio-mock-task = "0.1"
-
-[patch.crates-io]
-tower-service = { git = "https://github.com/tower-rs/tower.git" }
-tower-util = { git = "https://github.com/tower-rs/tower.git" }
