@@ -4,6 +4,7 @@ use crate::MakeTransport;
 use futures::{future, Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
@@ -43,6 +44,14 @@ impl<NT, Request> Maker<NT, Request> {
     // spawned services, but without https://github.com/rust-lang/rust/pull/49224 or
     // https://github.com/rust-lang/rust/issues/29625 that's pretty tricky (unless we're willing to
     // require Fn + Clone)
+}
+
+impl<NT, Request> tower_load::Load for Maker<NT, Request> {
+    type Metric = u8;
+
+    fn load(&self) -> Self::Metric {
+        0
+    }
 }
 
 /// A `Future` that will resolve into a `Client<T::Transport>`.
@@ -125,6 +134,7 @@ where
     T: Sink + Stream,
 {
     mediator: mediator::Sender<ClientRequest<T>>,
+    in_flight: Arc<atomic::AtomicUsize>,
     _error: PhantomData<E>,
 }
 
@@ -137,7 +147,7 @@ where
     waiting: Option<(T::Tag, ClientRequest<T>)>,
     transport: T,
 
-    in_flight: usize,
+    in_flight: Arc<atomic::AtomicUsize>,
     finish: bool,
 
     #[allow(unused)]
@@ -263,13 +273,14 @@ where
         F: FnOnce(E) + Send + 'static,
     {
         let (tx, rx) = mediator::new();
+        let in_flight = Arc::new(atomic::AtomicUsize::new(0));
         tokio_executor::spawn(
             ClientInner {
                 mediator: rx,
                 responses: Default::default(),
                 waiting: None,
                 transport,
-                in_flight: 0,
+                in_flight: in_flight.clone(),
                 error: PhantomData::<E>,
                 finish: false,
             }
@@ -277,6 +288,7 @@ where
         );
         Client {
             mediator: tx,
+            in_flight,
             _error: PhantomData,
         }
     }
@@ -306,7 +318,7 @@ where
                 self.waiting = Some((id, ClientRequest { req, res }));
             } else {
                 self.responses.push_back((id, res));
-                self.in_flight += 1;
+                self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
             }
         }
 
@@ -325,7 +337,7 @@ where
                         self.waiting = Some((id, ClientRequest { req, res }));
                     } else {
                         self.responses.push_back((id, res));
-                        self.in_flight += 1;
+                        self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
                     }
                 }
                 Async::Ready(None) => {
@@ -338,7 +350,7 @@ where
             }
         }
 
-        if self.in_flight != 0 {
+        if self.in_flight.load(atomic::Ordering::Acquire) != 0 {
             // flush out any stuff we've sent in the past
             // don't return on NotReady since we have to check for responses too
             if self.finish && self.waiting.is_none() {
@@ -362,7 +374,7 @@ where
         //
         // note that we *could* have this just be a loop, but we don't want to poll the stream
         // if we know there's nothing for it to produce.
-        while self.in_flight != 0 {
+        while self.in_flight.load(atomic::Ordering::Acquire) != 0 {
             match try_ready!(self.transport.poll().map_err(Error::from_stream_error)) {
                 Some(r) => {
                     // find the appropriate response channel.
@@ -384,7 +396,7 @@ where
                     // ignore send failures
                     // the client may just no longer care about the response
                     let _ = sender.send(r);
-                    self.in_flight -= 1;
+                    self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
                 }
                 None => {
                     // the transport terminated while we were waiting for a response!
@@ -394,7 +406,10 @@ where
             }
         }
 
-        if self.finish && self.waiting.is_none() && self.in_flight == 0 {
+        if self.finish
+            && self.waiting.is_none()
+            && self.in_flight.load(atomic::Ordering::Acquire) == 0
+        {
             // we're completely done once close() finishes!
             try_ready!(self.transport.close().map_err(Error::from_sink_error));
             return Ok(Async::Ready(()));
@@ -438,6 +453,17 @@ where
                 Box::new(future::err(E::from(Error::TransportFull)))
             }
         }
+    }
+}
+
+impl<T, E> tower_load::Load for Client<T, E>
+where
+    T: Sink + Stream,
+{
+    type Metric = usize;
+
+    fn load(&self) -> Self::Metric {
+        self.in_flight.load(atomic::Ordering::Acquire)
     }
 }
 

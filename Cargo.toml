@@ -18,6 +18,7 @@ license = "MIT"
 
 [dependencies]
 tower-service = "0.2"
+tower-load = "0.1"
 futures = "0.1"
 tokio-executor = "0.1.5"
 tokio-sync = "0.1"
@@ -32,3 +33,6 @@ serde_derive = "1.0"
 async-bincode = "0.4"
 slab = "0.4"
 tokio-mock-task = "0.1"
+
+[patch.crates-io]
+tower-load = { git = "https://github.com/tower-rs/tower.git" }
