@@ -45,9 +45,8 @@ macro_rules! event {
     ($span:expr, $($rest:tt)*) => {
         #[cfg(feature = "tokio-trace")]
         {
-            if let Some(ref _span) = $span {
-                //tokio_trace::event!(parent: span.id(), $($rest)*)
-                tokio_trace::event!($($rest)*)
+            if let Some(ref span) = $span {
+                span.in_scope(|| tokio_trace::event!($($rest)*))
             }
         }
     };
