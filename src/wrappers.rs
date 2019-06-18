@@ -18,6 +18,21 @@ pub struct Request<T> {
     pub(crate) span: Option<tokio_trace::Span>,
 }
 
+impl<T> Request<T> {
+    /// Create a new tokio-trace request.
+    pub fn new(t: T) -> Self {
+        t.into()
+    }
+}
+
+impl<T> Request<T> {
+    /// Set the span that should be used to trace this request's path through `tokio-tower`.
+    #[cfg(feature = "tokio-trace")]
+    pub fn set_span(&mut self, span: tokio_trace::Span) {
+        self.span = Some(span);
+    }
+}
+
 impl<T: PartialEq> PartialEq for Request<T> {
     fn eq(&self, other: &Request<T>) -> bool {
         self.req.eq(&other.req)
@@ -49,21 +64,6 @@ impl<T> From<T> for Request<T> {
             #[cfg(feature = "tokio-trace")]
             span: None,
         }
-    }
-}
-
-impl<T> Request<T> {
-    /// Create a new tokio-trace request.
-    pub fn new(t: T) -> Self {
-        t.into()
-    }
-}
-
-impl<T> Request<T> {
-    /// Set the span that should be used to trace this request's path through `tokio-tower`.
-    #[cfg(feature = "tokio-trace")]
-    pub fn set_span(&mut self, span: tokio_trace::Span) {
-        self.span = Some(span);
     }
 }
 

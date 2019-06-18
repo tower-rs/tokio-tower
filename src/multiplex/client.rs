@@ -345,9 +345,7 @@ where
                     // (i.e., was issued a while ago). so, for the swap needed for efficient
                     // remove, we want to swap with something else that is close to the front.
                     let pending = self.responses.swap_remove_front(pending).unwrap();
-                    #[cfg(feature = "tokio-trace")]
-                    let span = pending.span;
-                    event!(span, Level::TRACE, "response arrived; forwarding");
+                    event!(pending.span, Level::TRACE, "response arrived; forwarding");
 
                     // ignore send failures
                     // the client may just no longer care about the response
@@ -355,7 +353,7 @@ where
                     let _ = sender.send(ClientResponse {
                         response: r,
                         #[cfg(feature = "tokio-trace")]
-                        span,
+                        span: pending.span,
                     });
                     self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
                 }
@@ -405,6 +403,7 @@ where
 
     fn call(&mut self, req: Request<T::SinkItem>) -> Self::Future {
         let (tx, rx) = tokio_sync::oneshot::channel();
+        event!(req.span, Level::TRACE, "issuing request");
         let req = ClientRequest { req, res: tx };
         let fut = match self.mediator.try_send(req) {
             Ok(AsyncSink::Ready) => ClientResponseFutInner::Pending(rx),

@@ -209,14 +209,22 @@ where
         if let Some(ClientRequest { req, res }) = self.waiting.take() {
             #[cfg(feature = "tokio-trace")]
             let span = req.span;
-            event!(span, Level::TRACE, "retry sending request to Sink");
+            #[cfg(feature = "tokio-trace")]
+            let guard = span.as_ref().map(|s| s.enter());
+            #[cfg(feature = "tokio-trace")]
+            tokio_trace::event!(Level::TRACE, "retry sending request to Sink");
 
             if let AsyncSink::NotReady(req) = self
                 .transport
                 .start_send(req.req)
                 .map_err(Error::from_sink_error)?
             {
-                event!(span, Level::TRACE, "Sink still full; queueing");
+                #[cfg(feature = "tokio-trace")]
+                {
+                    tokio_trace::event!(Level::TRACE, "Sink still full; queueing");
+                    drop(guard);
+                }
+
                 let req = Request {
                     req,
                     #[cfg(feature = "tokio-trace")]
@@ -224,7 +232,12 @@ where
                 };
                 self.waiting = Some(ClientRequest { req, res });
             } else {
-                event!(span, Level::TRACE, "request sent");
+                #[cfg(feature = "tokio-trace")]
+                {
+                    tokio_trace::event!(Level::TRACE, "request sent");
+                    drop(guard);
+                }
+
                 self.responses.push_back(Pending {
                     tx: res,
                     #[cfg(feature = "tokio-trace")]
@@ -240,8 +253,10 @@ where
                 Async::Ready(Some(ClientRequest { req, res })) => {
                     #[cfg(feature = "tokio-trace")]
                     let span = req.span;
-                    event!(
-                        span,
+                    #[cfg(feature = "tokio-trace")]
+                    let guard = span.as_ref().map(|s| s.enter());
+                    #[cfg(feature = "tokio-trace")]
+                    tokio_trace::event!(
                         Level::TRACE,
                         "request received by worker; sending to Sink"
                     );
@@ -252,7 +267,11 @@ where
                         .map_err(Error::from_sink_error)?
                     {
                         assert!(self.waiting.is_none());
-                        event!(span, Level::TRACE, "Sink full; queueing");
+                        #[cfg(feature = "tokio-trace")]
+                        {
+                            tokio_trace::event!(Level::TRACE, "Sink full; queueing");
+                            drop(guard);
+                        }
                         let req = Request {
                             req,
                             #[cfg(feature = "tokio-trace")]
@@ -260,7 +279,11 @@ where
                         };
                         self.waiting = Some(ClientRequest { req, res });
                     } else {
-                        event!(span, Level::TRACE, "request sent");
+                        #[cfg(feature = "tokio-trace")]
+                        {
+                            tokio_trace::event!(Level::TRACE, "request sent");
+                            drop(guard);
+                        }
                         self.responses.push_back(Pending {
                             tx: res,
                             #[cfg(feature = "tokio-trace")]
@@ -312,15 +335,13 @@ where
                         .responses
                         .pop_front()
                         .expect("got a request with no sender?");
-                    #[cfg(feature = "tokio-trace")]
-                    let span = pending.span;
-                    event!(span, Level::TRACE, "response arrived; forwarding");
+                    event!(pending.span, Level::TRACE, "response arrived; forwarding");
 
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
                         #[cfg(feature = "tokio-trace")]
-                        span,
+                        span: pending.span,
                     });
                     self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
                 }
@@ -370,6 +391,7 @@ where
 
     fn call(&mut self, req: Request<T::SinkItem>) -> Self::Future {
         let (tx, rx) = tokio_sync::oneshot::channel();
+        event!(req.span, Level::TRACE, "issuing request");
         let req = ClientRequest { req: req, res: tx };
         let fut = match self.mediator.try_send(req) {
             Ok(AsyncSink::Ready) => ClientResponseFutInner::Pending(rx),
