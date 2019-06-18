@@ -41,6 +41,19 @@
 #[macro_use]
 extern crate futures;
 
+macro_rules! event {
+    ($span:expr, $($rest:tt)*) => {
+        #[cfg(feature = "trace")]
+        {
+            if let Some(ref span) = $span {
+                span.enter(|| {
+                    tokio_trace::event!($($rest)*)
+                })
+            }
+        }
+    };
+}
+
 mod error;
 mod mediator;
 pub(crate) mod wrappers;

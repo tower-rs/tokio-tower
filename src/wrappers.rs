@@ -100,9 +100,12 @@ where
         match *self {
             ClientResponseFutInner::Failed(ref mut e) => Err(e
                 .take()
-                .expect("CLientResponseFut::poll called after Err returned")),
+                .expect("ClientResponseFut::poll called after Err returned")),
             ClientResponseFutInner::Pending(ref mut os) => match os.poll() {
-                Ok(Async::Ready(r)) => Ok(Async::Ready(r)),
+                Ok(Async::Ready(r)) => {
+                    event!(r.span, tokio_trace::Level::TRACE, "response returned");
+                    Ok(Async::Ready(r))
+                }
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
                 Err(_) => return Err(E::from(Error::ClientDropped)),
             },

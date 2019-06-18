@@ -9,6 +9,9 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
+#[cfg(feature = "trace")]
+use tokio_trace::Level;
+
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
 
@@ -226,12 +229,14 @@ where
         if let Some((id, ClientRequest { req, res })) = self.waiting.take() {
             #[cfg(feature = "trace")]
             let span = req.span;
+            event!(span, Level::TRACE, "retry sending request to Sink");
 
             if let AsyncSink::NotReady(req) = self
                 .transport
                 .start_send(req.req)
                 .map_err(Error::from_sink_error)?
             {
+                event!(span, Level::TRACE, "Sink still full; queueing");
                 let req = Request {
                     req,
                     #[cfg(feature = "trace")]
@@ -239,6 +244,7 @@ where
                 };
                 self.waiting = Some((id, ClientRequest { req, res }));
             } else {
+                event!(span, Level::TRACE, "request sent");
                 self.responses.push_back(Pending {
                     tag: id,
                     tx: res,
@@ -257,6 +263,11 @@ where
 
                     #[cfg(feature = "trace")]
                     let span = req.span;
+                    event!(
+                        span,
+                        Level::TRACE,
+                        "request received by worker; sending to Sink"
+                    );
 
                     if let AsyncSink::NotReady(req) = self
                         .transport
@@ -264,6 +275,7 @@ where
                         .map_err(Error::from_sink_error)?
                     {
                         assert!(self.waiting.is_none());
+                        event!(span, Level::TRACE, "Sink full; queueing");
                         let req = Request {
                             req,
                             #[cfg(feature = "trace")]
@@ -271,6 +283,7 @@ where
                         };
                         self.waiting = Some((id, ClientRequest { req, res }));
                     } else {
+                        event!(span, Level::TRACE, "request sent");
                         self.responses.push_back(Pending {
                             tag: id,
                             tx: res,
@@ -334,10 +347,11 @@ where
                     let pending = self.responses.swap_remove_front(pending).unwrap();
                     #[cfg(feature = "trace")]
                     let span = pending.span;
-                    let sender = pending.tx;
+                    event!(span, Level::TRACE, "response arrived; forwarding");
 
                     // ignore send failures
                     // the client may just no longer care about the response
+                    let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
                         #[cfg(feature = "trace")]

@@ -9,6 +9,9 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
+#[cfg(feature = "trace")]
+use tokio_trace::Level;
+
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
 pub struct Maker<NT, Request> {
@@ -206,12 +209,14 @@ where
         if let Some(ClientRequest { req, res }) = self.waiting.take() {
             #[cfg(feature = "trace")]
             let span = req.span;
+            event!(span, Level::TRACE, "retry sending request to Sink");
 
             if let AsyncSink::NotReady(req) = self
                 .transport
                 .start_send(req.req)
                 .map_err(Error::from_sink_error)?
             {
+                event!(span, Level::TRACE, "Sink still full; queueing");
                 let req = Request {
                     req,
                     #[cfg(feature = "trace")]
@@ -219,6 +224,7 @@ where
                 };
                 self.waiting = Some(ClientRequest { req, res });
             } else {
+                event!(span, Level::TRACE, "request sent");
                 self.responses.push_back(Pending {
                     tx: res,
                     #[cfg(feature = "trace")]
@@ -234,6 +240,11 @@ where
                 Async::Ready(Some(ClientRequest { req, res })) => {
                     #[cfg(feature = "trace")]
                     let span = req.span;
+                    event!(
+                        span,
+                        Level::TRACE,
+                        "request received by worker; sending to Sink"
+                    );
 
                     if let AsyncSink::NotReady(req) = self
                         .transport
@@ -241,6 +252,7 @@ where
                         .map_err(Error::from_sink_error)?
                     {
                         assert!(self.waiting.is_none());
+                        event!(span, Level::TRACE, "Sink full; queueing");
                         let req = Request {
                             req,
                             #[cfg(feature = "trace")]
@@ -248,6 +260,7 @@ where
                         };
                         self.waiting = Some(ClientRequest { req, res });
                     } else {
+                        event!(span, Level::TRACE, "request sent");
                         self.responses.push_back(Pending {
                             tx: res,
                             #[cfg(feature = "trace")]
@@ -301,6 +314,8 @@ where
                         .expect("got a request with no sender?");
                     #[cfg(feature = "trace")]
                     let span = pending.span;
+                    event!(span, Level::TRACE, "response arrived; forwarding");
+
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
