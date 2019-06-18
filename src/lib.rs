@@ -43,7 +43,7 @@ extern crate futures;
 
 macro_rules! event {
     ($span:expr, $($rest:tt)*) => {
-        #[cfg(feature = "trace")]
+        #[cfg(feature = "tokio-trace")]
         {
             if let Some(ref span) = $span {
                 span.enter(|| {

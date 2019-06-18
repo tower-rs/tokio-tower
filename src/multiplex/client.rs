@@ -9,7 +9,7 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
-#[cfg(feature = "trace")]
+#[cfg(feature = "tokio-trace")]
 use tokio_trace::Level;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
@@ -145,7 +145,7 @@ where
 struct Pending<Tag, Item> {
     tag: Tag,
     tx: tokio_sync::oneshot::Sender<ClientResponse<Item>>,
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "tokio-trace")]
     span: Option<tokio_trace::Span>,
 }
 
@@ -227,7 +227,7 @@ where
         // make sure there's room for at least one more request
 
         if let Some((id, ClientRequest { req, res })) = self.waiting.take() {
-            #[cfg(feature = "trace")]
+            #[cfg(feature = "tokio-trace")]
             let span = req.span;
             event!(span, Level::TRACE, "retry sending request to Sink");
 
@@ -239,7 +239,7 @@ where
                 event!(span, Level::TRACE, "Sink still full; queueing");
                 let req = Request {
                     req,
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     span,
                 };
                 self.waiting = Some((id, ClientRequest { req, res }));
@@ -248,7 +248,7 @@ where
                 self.responses.push_back(Pending {
                     tag: id,
                     tx: res,
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     span,
                 });
                 self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -261,7 +261,7 @@ where
                 Async::Ready(Some(ClientRequest { mut req, res })) => {
                     let id = self.transport.assign_tag(&mut req.req);
 
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     let span = req.span;
                     event!(
                         span,
@@ -278,7 +278,7 @@ where
                         event!(span, Level::TRACE, "Sink full; queueing");
                         let req = Request {
                             req,
-                            #[cfg(feature = "trace")]
+                            #[cfg(feature = "tokio-trace")]
                             span,
                         };
                         self.waiting = Some((id, ClientRequest { req, res }));
@@ -287,7 +287,7 @@ where
                         self.responses.push_back(Pending {
                             tag: id,
                             tx: res,
-                            #[cfg(feature = "trace")]
+                            #[cfg(feature = "tokio-trace")]
                             span,
                         });
                         self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -345,7 +345,7 @@ where
                     // (i.e., was issued a while ago). so, for the swap needed for efficient
                     // remove, we want to swap with something else that is close to the front.
                     let pending = self.responses.swap_remove_front(pending).unwrap();
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     let span = pending.span;
                     event!(span, Level::TRACE, "response arrived; forwarding");
 
@@ -354,7 +354,7 @@ where
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
-                        #[cfg(feature = "trace")]
+                        #[cfg(feature = "tokio-trace")]
                         span,
                     });
                     self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);

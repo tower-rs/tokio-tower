@@ -9,7 +9,7 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
-#[cfg(feature = "trace")]
+#[cfg(feature = "tokio-trace")]
 use tokio_trace::Level;
 
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
@@ -126,7 +126,7 @@ where
 
 struct Pending<Item> {
     tx: tokio_sync::oneshot::Sender<ClientResponse<Item>>,
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "tokio-trace")]
     span: Option<tokio_trace::Span>,
 }
 
@@ -207,7 +207,7 @@ where
         // make sure there's room for at least one more request
 
         if let Some(ClientRequest { req, res }) = self.waiting.take() {
-            #[cfg(feature = "trace")]
+            #[cfg(feature = "tokio-trace")]
             let span = req.span;
             event!(span, Level::TRACE, "retry sending request to Sink");
 
@@ -219,7 +219,7 @@ where
                 event!(span, Level::TRACE, "Sink still full; queueing");
                 let req = Request {
                     req,
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     span,
                 };
                 self.waiting = Some(ClientRequest { req, res });
@@ -227,7 +227,7 @@ where
                 event!(span, Level::TRACE, "request sent");
                 self.responses.push_back(Pending {
                     tx: res,
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     span,
                 });
                 self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -238,7 +238,7 @@ where
             // send more requests if we have them
             match self.mediator.try_recv() {
                 Async::Ready(Some(ClientRequest { req, res })) => {
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     let span = req.span;
                     event!(
                         span,
@@ -255,7 +255,7 @@ where
                         event!(span, Level::TRACE, "Sink full; queueing");
                         let req = Request {
                             req,
-                            #[cfg(feature = "trace")]
+                            #[cfg(feature = "tokio-trace")]
                             span,
                         };
                         self.waiting = Some(ClientRequest { req, res });
@@ -263,7 +263,7 @@ where
                         event!(span, Level::TRACE, "request sent");
                         self.responses.push_back(Pending {
                             tx: res,
-                            #[cfg(feature = "trace")]
+                            #[cfg(feature = "tokio-trace")]
                             span,
                         });
                         self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -312,14 +312,14 @@ where
                         .responses
                         .pop_front()
                         .expect("got a request with no sender?");
-                    #[cfg(feature = "trace")]
+                    #[cfg(feature = "tokio-trace")]
                     let span = pending.span;
                     event!(span, Level::TRACE, "response arrived; forwarding");
 
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
-                        #[cfg(feature = "trace")]
+                        #[cfg(feature = "tokio-trace")]
                         span,
                     });
                     self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);

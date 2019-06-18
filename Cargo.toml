@@ -17,8 +17,8 @@ categories = ["asynchronous", "network-programming"]
 license = "MIT"
 
 [features]
-trace = ["tokio-trace"]
-default = ["trace"]
+log = ["tokio-trace/log"]
+default = ["tokio-trace"]
 
 [dependencies]
 tower-service = "0.2"

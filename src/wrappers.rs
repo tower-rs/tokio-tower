@@ -9,12 +9,12 @@ use futures::{Async, Future, Poll, Sink, Stream};
 /// the client. To enable this tracing, add this to your dependency on `tokio-tower`:
 ///
 /// ```toml
-/// features = ["trace"]
+/// features = ["tokio-trace"]
 /// ```
 #[derive(Clone, Debug)]
 pub struct Request<T> {
     pub(crate) req: T,
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "tokio-trace")]
     pub(crate) span: Option<tokio_trace::Span>,
 }
 
@@ -46,7 +46,7 @@ impl<T> From<T> for Request<T> {
     fn from(t: T) -> Self {
         Request {
             req: t,
-            #[cfg(feature = "trace")]
+            #[cfg(feature = "tokio-trace")]
             span: None,
         }
     }
@@ -61,7 +61,7 @@ impl<T> Request<T> {
 
 impl<T> Request<T> {
     /// Set the span that should be used to trace this request's path through `tokio-tower`.
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "tokio-trace")]
     pub fn set_span(&mut self, span: tokio_trace::Span) {
         self.span = Some(span);
     }
@@ -77,7 +77,7 @@ where
 
 pub(crate) struct ClientResponse<T> {
     pub(crate) response: T,
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "tokio-trace")]
     pub(crate) span: Option<tokio_trace::Span>,
 }
 
@@ -135,7 +135,7 @@ where
     T: Stream,
 {
     /// Make the future also resolve with its associated `tokio-trace::Span` (if any).
-    #[cfg(feature = "trace")]
+    #[cfg(feature = "tokio-trace")]
     pub fn with_span(self) -> SpannedClientResponseFut<T, E> {
         SpannedClientResponseFut { fut: self.fut }
     }
@@ -154,7 +154,7 @@ where
 }
 
 /// A future that resolves a previously submitted [`Request`] that includes a `tokio-trace::Span`.
-#[cfg(feature = "trace")]
+#[cfg(feature = "tokio-trace")]
 pub struct SpannedClientResponseFut<T, E>
 where
     T: Stream,
@@ -162,7 +162,7 @@ where
     fut: ClientResponseFutInner<T, E>,
 }
 
-#[cfg(feature = "trace")]
+#[cfg(feature = "tokio-trace")]
 impl<T, E> Future for SpannedClientResponseFut<T, E>
 where
     T: Sink + Stream,
