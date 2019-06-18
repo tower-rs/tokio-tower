@@ -222,7 +222,7 @@ where
     type Item = ();
     type Error = E;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(&mut self) -> Poll<Self::Item, E> {
         // if Stream had a poll_ready, we could call that here to
         // make sure there's room for at least one more request
 
@@ -393,9 +393,9 @@ where
 {
     type Response = T::Item;
     type Error = E;
-    type Future = ClientResponseFut<T, Self::Error>;
+    type Future = ClientResponseFut<T, E>;
 
-    fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
+    fn poll_ready(&mut self) -> Result<Async<()>, E> {
         self.mediator
             .poll_ready()
             .map_err(|_| E::from(Error::ClientDropped))
