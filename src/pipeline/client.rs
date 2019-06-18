@@ -1,7 +1,8 @@
 use crate::mediator;
-use crate::ClientRequest;
+use crate::wrappers::*;
+use crate::Error;
 use crate::MakeTransport;
-use futures::{future, Async, AsyncSink, Future, Poll, Sink, Stream};
+use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::{atomic, Arc};
@@ -120,12 +121,18 @@ where
     _error: PhantomData<E>,
 }
 
+struct Pending<Item> {
+    tx: tokio_sync::oneshot::Sender<ClientResponse<Item>>,
+    #[cfg(feature = "trace")]
+    span: Option<tokio_trace::Span>,
+}
+
 struct ClientInner<T, E>
 where
     T: Sink + Stream,
 {
     mediator: mediator::Receiver<ClientRequest<T>>,
-    responses: VecDeque<tokio_sync::oneshot::Sender<T::Item>>,
+    responses: VecDeque<Pending<T::Item>>,
     waiting: Option<ClientRequest<T>>,
     transport: T,
 
@@ -134,100 +141,6 @@ where
 
     #[allow(unused)]
     error: PhantomData<E>,
-}
-
-/// An error that occurred while servicing a request.
-pub enum Error<T>
-where
-    T: Sink + Stream,
-{
-    /// The underlying transport failed to send a request.
-    BrokenTransportSend(T::SinkError),
-
-    /// The underlying transport failed while attempting to receive a response.
-    ///
-    /// If `None`, the transport closed without error while there were pending requests.
-    BrokenTransportRecv(Option<T::Error>),
-
-    /// Attempted to issue a `call` when no more requests can be in flight.
-    ///
-    /// See [`tower_service::Service::poll_ready`] and [`Client::with_limit`].
-    TransportFull,
-
-    /// Attempted to issue a `call`, but the underlying transport has been closed.
-    ClientDropped,
-}
-
-impl<T> fmt::Display for Error<T>
-where
-    T: Sink + Stream,
-    T::SinkError: fmt::Display,
-    T::Error: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::BrokenTransportSend(ref se) => fmt::Display::fmt(se, f),
-            Error::BrokenTransportRecv(Some(ref se)) => fmt::Display::fmt(se, f),
-            Error::BrokenTransportRecv(None) => f.pad("transport closed with in-flight requests"),
-            Error::TransportFull => f.pad("no more in-flight requests allowed"),
-            Error::ClientDropped => f.pad("Client was dropped"),
-        }
-    }
-}
-
-impl<T> fmt::Debug for Error<T>
-where
-    T: Sink + Stream,
-    T::SinkError: fmt::Debug,
-    T::Error: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::BrokenTransportSend(ref se) => write!(f, "BrokenTransportSend({:?})", se),
-            Error::BrokenTransportRecv(Some(ref se)) => write!(f, "BrokenTransportRecv({:?})", se),
-            Error::BrokenTransportRecv(None) => f.pad("BrokenTransportRecv"),
-            Error::TransportFull => f.pad("TransportFull"),
-            Error::ClientDropped => f.pad("ClientDropped"),
-        }
-    }
-}
-
-impl<T> error::Error for Error<T>
-where
-    T: Sink + Stream,
-    T::SinkError: error::Error,
-    T::Error: error::Error,
-{
-    fn cause(&self) -> Option<&error::Error> {
-        match *self {
-            Error::BrokenTransportSend(ref se) => Some(se),
-            Error::BrokenTransportRecv(Some(ref se)) => Some(se),
-            _ => None,
-        }
-    }
-
-    fn description(&self) -> &str {
-        match *self {
-            Error::BrokenTransportSend(ref se) => se.description(),
-            Error::BrokenTransportRecv(Some(ref se)) => se.description(),
-            Error::BrokenTransportRecv(None) => "transport closed with in-flight requests",
-            Error::TransportFull => "no more in-flight requests allowed",
-            Error::ClientDropped => "Client was dropped",
-        }
-    }
-}
-
-impl<T> Error<T>
-where
-    T: Sink + Stream,
-{
-    fn from_sink_error(e: T::SinkError) -> Self {
-        Error::BrokenTransportSend(e)
-    }
-
-    fn from_stream_error(e: T::Error) -> Self {
-        Error::BrokenTransportRecv(Some(e))
-    }
 }
 
 impl<T, E> Client<T, E>
@@ -291,14 +204,26 @@ where
         // make sure there's room for at least one more request
 
         if let Some(ClientRequest { req, res }) = self.waiting.take() {
+            #[cfg(feature = "trace")]
+            let span = req.span;
+
             if let AsyncSink::NotReady(req) = self
                 .transport
-                .start_send(req)
+                .start_send(req.req)
                 .map_err(Error::from_sink_error)?
             {
+                let req = Request {
+                    req,
+                    #[cfg(feature = "trace")]
+                    span,
+                };
                 self.waiting = Some(ClientRequest { req, res });
             } else {
-                self.responses.push_back(res);
+                self.responses.push_back(Pending {
+                    tx: res,
+                    #[cfg(feature = "trace")]
+                    span,
+                });
                 self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
             }
         }
@@ -307,15 +232,27 @@ where
             // send more requests if we have them
             match self.mediator.try_recv() {
                 Async::Ready(Some(ClientRequest { req, res })) => {
+                    #[cfg(feature = "trace")]
+                    let span = req.span;
+
                     if let AsyncSink::NotReady(req) = self
                         .transport
-                        .start_send(req)
+                        .start_send(req.req)
                         .map_err(Error::from_sink_error)?
                     {
                         assert!(self.waiting.is_none());
+                        let req = Request {
+                            req,
+                            #[cfg(feature = "trace")]
+                            span,
+                        };
                         self.waiting = Some(ClientRequest { req, res });
                     } else {
-                        self.responses.push_back(res);
+                        self.responses.push_back(Pending {
+                            tx: res,
+                            #[cfg(feature = "trace")]
+                            span,
+                        });
                         self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
                     }
                 }
@@ -358,11 +295,18 @@ where
                 Some(r) => {
                     // ignore send failures
                     // the client may just no longer care about the response
-                    let sender = self
+                    let pending = self
                         .responses
                         .pop_front()
                         .expect("got a request with no sender?");
-                    let _ = sender.send(r);
+                    #[cfg(feature = "trace")]
+                    let span = pending.span;
+                    let sender = pending.tx;
+                    let _ = sender.send(ClientResponse {
+                        response: r,
+                        #[cfg(feature = "trace")]
+                        span,
+                    });
                     self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
                 }
                 None => {
@@ -391,7 +335,7 @@ where
     }
 }
 
-impl<T, E> Service<T::SinkItem> for Client<T, E>
+impl<T, E> Service<Request<T::SinkItem>> for Client<T, E>
 where
     T: Sink + Stream,
     E: From<Error<T>>,
@@ -401,9 +345,7 @@ where
 {
     type Response = T::Item;
     type Error = E;
-
-    // TODO: get rid of Box + Send bound here by using existential types
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error> + Send>;
+    type Future = ClientResponseFut<T, Self::Error>;
 
     fn poll_ready(&mut self) -> Result<Async<()>, Self::Error> {
         self.mediator
@@ -411,15 +353,16 @@ where
             .map_err(|_| E::from(Error::ClientDropped))
     }
 
-    fn call(&mut self, req: T::SinkItem) -> Self::Future {
+    fn call(&mut self, req: Request<T::SinkItem>) -> Self::Future {
         let (tx, rx) = tokio_sync::oneshot::channel();
         let req = ClientRequest { req: req, res: tx };
-        match self.mediator.try_send(req) {
-            Ok(AsyncSink::Ready) => Box::new(rx.map_err(|_| E::from(Error::ClientDropped))),
+        let fut = match self.mediator.try_send(req) {
+            Ok(AsyncSink::Ready) => ClientResponseFutInner::Pending(rx),
             Ok(AsyncSink::NotReady(_)) | Err(_) => {
-                Box::new(future::err(E::from(Error::TransportFull)))
+                ClientResponseFutInner::Failed(Some(E::from(Error::TransportFull)))
             }
-        }
+        };
+        fut.into()
     }
 }
 
