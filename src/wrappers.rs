@@ -28,8 +28,9 @@ impl<T> Request<T> {
 impl<T> Request<T> {
     /// Set the span that should be used to trace this request's path through `tokio-tower`.
     #[cfg(feature = "tokio-trace")]
-    pub fn set_span(&mut self, span: tokio_trace::Span) {
+    pub fn with_span(mut self, span: tokio_trace::Span) -> Self {
         self.span = Some(span);
+        self
     }
 }
 
