@@ -80,7 +80,7 @@ where
     S: Service<T::Item>,
     S::Error: error::Error,
 {
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             Error::BrokenTransportSend(ref se) => Some(se),
             Error::BrokenTransportRecv(ref se) => Some(se),

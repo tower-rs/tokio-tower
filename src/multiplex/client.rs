@@ -446,7 +446,7 @@ impl<T> error::Error for SpawnError<T>
 where
     T: error::Error,
 {
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             SpawnError::SpawnFailed => None,
             SpawnError::Inner(ref te) => Some(te),

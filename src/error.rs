@@ -63,7 +63,7 @@ where
     T::SinkError: error::Error,
     T::Error: error::Error,
 {
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             Error::BrokenTransportSend(ref se) => Some(se),
             Error::BrokenTransportRecv(Some(ref se)) => Some(se),
