@@ -9,8 +9,8 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
-#[cfg(feature = "tokio-trace")]
-use tokio_trace::Level;
+#[cfg(feature = "tracing")]
+use tracing::Level;
 
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
@@ -126,8 +126,8 @@ where
 
 struct Pending<Item> {
     tx: tokio_sync::oneshot::Sender<ClientResponse<Item>>,
-    #[cfg(feature = "tokio-trace")]
-    span: Option<tokio_trace::Span>,
+    #[cfg(feature = "tracing")]
+    span: Option<tracing::Span>,
 }
 
 struct ClientInner<T, E>
@@ -207,40 +207,40 @@ where
         // make sure there's room for at least one more request
 
         if let Some(ClientRequest { req, res }) = self.waiting.take() {
-            #[cfg(feature = "tokio-trace")]
+            #[cfg(feature = "tracing")]
             let span = req.span;
-            #[cfg(feature = "tokio-trace")]
+            #[cfg(feature = "tracing")]
             let guard = span.as_ref().map(|s| s.enter());
-            #[cfg(feature = "tokio-trace")]
-            tokio_trace::event!(Level::TRACE, "retry sending request to Sink");
+            #[cfg(feature = "tracing")]
+            tracing::event!(Level::TRACE, "retry sending request to Sink");
 
             if let AsyncSink::NotReady(req) = self
                 .transport
                 .start_send(req.req)
                 .map_err(Error::from_sink_error)?
             {
-                #[cfg(feature = "tokio-trace")]
+                #[cfg(feature = "tracing")]
                 {
-                    tokio_trace::event!(Level::TRACE, "Sink still full; queueing");
+                    tracing::event!(Level::TRACE, "Sink still full; queueing");
                     drop(guard);
                 }
 
                 let req = Request {
                     req,
-                    #[cfg(feature = "tokio-trace")]
+                    #[cfg(feature = "tracing")]
                     span,
                 };
                 self.waiting = Some(ClientRequest { req, res });
             } else {
-                #[cfg(feature = "tokio-trace")]
+                #[cfg(feature = "tracing")]
                 {
-                    tokio_trace::event!(Level::TRACE, "request sent");
+                    tracing::event!(Level::TRACE, "request sent");
                     drop(guard);
                 }
 
                 self.responses.push_back(Pending {
                     tx: res,
-                    #[cfg(feature = "tokio-trace")]
+                    #[cfg(feature = "tracing")]
                     span,
                 });
                 self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -251,15 +251,12 @@ where
             // send more requests if we have them
             match self.mediator.try_recv() {
                 Async::Ready(Some(ClientRequest { req, res })) => {
-                    #[cfg(feature = "tokio-trace")]
+                    #[cfg(feature = "tracing")]
                     let span = req.span;
-                    #[cfg(feature = "tokio-trace")]
+                    #[cfg(feature = "tracing")]
                     let guard = span.as_ref().map(|s| s.enter());
-                    #[cfg(feature = "tokio-trace")]
-                    tokio_trace::event!(
-                        Level::TRACE,
-                        "request received by worker; sending to Sink"
-                    );
+                    #[cfg(feature = "tracing")]
+                    tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
 
                     if let AsyncSink::NotReady(req) = self
                         .transport
@@ -267,26 +264,26 @@ where
                         .map_err(Error::from_sink_error)?
                     {
                         assert!(self.waiting.is_none());
-                        #[cfg(feature = "tokio-trace")]
+                        #[cfg(feature = "tracing")]
                         {
-                            tokio_trace::event!(Level::TRACE, "Sink full; queueing");
+                            tracing::event!(Level::TRACE, "Sink full; queueing");
                             drop(guard);
                         }
                         let req = Request {
                             req,
-                            #[cfg(feature = "tokio-trace")]
+                            #[cfg(feature = "tracing")]
                             span,
                         };
                         self.waiting = Some(ClientRequest { req, res });
                     } else {
-                        #[cfg(feature = "tokio-trace")]
+                        #[cfg(feature = "tracing")]
                         {
-                            tokio_trace::event!(Level::TRACE, "request sent");
+                            tracing::event!(Level::TRACE, "request sent");
                             drop(guard);
                         }
                         self.responses.push_back(Pending {
                             tx: res,
-                            #[cfg(feature = "tokio-trace")]
+                            #[cfg(feature = "tracing")]
                             span,
                         });
                         self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -340,7 +337,7 @@ where
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
-                        #[cfg(feature = "tokio-trace")]
+                        #[cfg(feature = "tracing")]
                         span: pending.span,
                     });
                     self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);

@@ -5,21 +5,21 @@ use futures::{Async, Future, Poll, Sink, Stream};
 ///
 /// The request primarily consists of the inner request type, but may also be annotated with
 /// additional metadata if support for them has been enabled. For the time being, the only
-/// supported meta-data is a `tokio-trace::Span`, which enables tracing the request's path through
+/// supported meta-data is a `tracing::Span`, which enables tracing the request's path through
 /// the client. To enable this tracing, add this to your dependency on `tokio-tower`:
 ///
 /// ```toml
-/// features = ["tokio-trace"]
+/// features = ["tracing"]
 /// ```
 #[derive(Clone, Debug)]
 pub struct Request<T> {
     pub(crate) req: T,
-    #[cfg(feature = "tokio-trace")]
-    pub(crate) span: Option<tokio_trace::Span>,
+    #[cfg(feature = "tracing")]
+    pub(crate) span: Option<tracing::Span>,
 }
 
 impl<T> Request<T> {
-    /// Create a new tokio-trace request.
+    /// Create a new tracing request.
     pub fn new(t: T) -> Self {
         t.into()
     }
@@ -27,8 +27,8 @@ impl<T> Request<T> {
 
 impl<T> Request<T> {
     /// Set the span that should be used to trace this request's path through `tokio-tower`.
-    #[cfg(feature = "tokio-trace")]
-    pub fn with_span(mut self, span: tokio_trace::Span) -> Self {
+    #[cfg(feature = "tracing")]
+    pub fn with_span(mut self, span: tracing::Span) -> Self {
         self.span = Some(span);
         self
     }
@@ -62,7 +62,7 @@ impl<T> From<T> for Request<T> {
     fn from(t: T) -> Self {
         Request {
             req: t,
-            #[cfg(feature = "tokio-trace")]
+            #[cfg(feature = "tracing")]
             span: None,
         }
     }
@@ -78,8 +78,8 @@ where
 
 pub(crate) struct ClientResponse<T> {
     pub(crate) response: T,
-    #[cfg(feature = "tokio-trace")]
-    pub(crate) span: Option<tokio_trace::Span>,
+    #[cfg(feature = "tracing")]
+    pub(crate) span: Option<tracing::Span>,
 }
 
 pub(crate) enum ClientResponseFutInner<T, E>
@@ -104,7 +104,7 @@ where
                 .expect("ClientResponseFut::poll called after Err returned")),
             ClientResponseFutInner::Pending(ref mut os) => match os.poll() {
                 Ok(Async::Ready(r)) => {
-                    event!(r.span, tokio_trace::Level::TRACE, "response returned");
+                    event!(r.span, tracing::Level::TRACE, "response returned");
                     Ok(Async::Ready(r))
                 }
                 Ok(Async::NotReady) => return Ok(Async::NotReady),
@@ -135,8 +135,8 @@ impl<T, E> ClientResponseFut<T, E>
 where
     T: Stream,
 {
-    /// Make the future also resolve with its associated `tokio-trace::Span` (if any).
-    #[cfg(feature = "tokio-trace")]
+    /// Make the future also resolve with its associated `tracing::Span` (if any).
+    #[cfg(feature = "tracing")]
     pub fn with_span(self) -> SpannedClientResponseFut<T, E> {
         SpannedClientResponseFut { fut: self.fut }
     }
@@ -154,8 +154,8 @@ where
     }
 }
 
-/// A future that resolves a previously submitted [`Request`] that includes a `tokio-trace::Span`.
-#[cfg(feature = "tokio-trace")]
+/// A future that resolves a previously submitted [`Request`] that includes a `tracing::Span`.
+#[cfg(feature = "tracing")]
 pub struct SpannedClientResponseFut<T, E>
 where
     T: Stream,
@@ -163,13 +163,13 @@ where
     fut: ClientResponseFutInner<T, E>,
 }
 
-#[cfg(feature = "tokio-trace")]
+#[cfg(feature = "tracing")]
 impl<T, E> Future for SpannedClientResponseFut<T, E>
 where
     T: Sink + Stream,
     E: From<Error<T>>,
 {
-    type Item = (T::Item, Option<tokio_trace::Span>);
+    type Item = (T::Item, Option<tracing::Span>);
     type Error = E;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let ClientResponse { response, span, .. } = try_ready!(self.fut.poll());
