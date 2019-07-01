@@ -32,7 +32,7 @@ pub trait TagStore<Request, Response> {
 /// fresh `Client`s.
 pub struct Maker<NT, Request> {
     t_maker: NT,
-    _req: PhantomData<Request>,
+    _req: PhantomData<fn(Request)>,
 }
 
 impl<NT, Request> Maker<NT, Request> {
@@ -139,7 +139,7 @@ where
 {
     mediator: mediator::Sender<ClientRequest<T>>,
     in_flight: Arc<atomic::AtomicUsize>,
-    _error: PhantomData<E>,
+    _error: PhantomData<fn(E)>,
 }
 
 struct Pending<Tag, Item> {
@@ -162,7 +162,7 @@ where
     finish: bool,
 
     #[allow(unused)]
-    error: PhantomData<E>,
+    error: PhantomData<fn(E)>,
 }
 
 impl<T, E> Client<T, E>
@@ -198,7 +198,7 @@ where
                 waiting: None,
                 transport,
                 in_flight: in_flight.clone(),
-                error: PhantomData::<E>,
+                error: PhantomData::<fn(E)>,
                 finish: false,
             }
             .map_err(move |e| on_service_error(e)),
