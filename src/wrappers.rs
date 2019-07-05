@@ -15,7 +15,7 @@ use futures::{Async, Future, Poll, Sink, Stream};
 pub struct Request<T> {
     pub(crate) req: T,
     #[cfg(feature = "tracing")]
-    pub(crate) span: Option<tracing::Span>,
+    pub(crate) span: tracing::Span,
 }
 
 impl<T> Request<T> {
@@ -29,7 +29,7 @@ impl<T> Request<T> {
     /// Set the span that should be used to trace this request's path through `tokio-tower`.
     #[cfg(feature = "tracing")]
     pub fn with_span(mut self, span: tracing::Span) -> Self {
-        self.span = Some(span);
+        self.span = span;
         self
     }
 }
@@ -63,7 +63,7 @@ impl<T> From<T> for Request<T> {
         Request {
             req: t,
             #[cfg(feature = "tracing")]
-            span: None,
+            span: tracing::Span::none(),
         }
     }
 }
@@ -79,7 +79,7 @@ where
 pub(crate) struct ClientResponse<T> {
     pub(crate) response: T,
     #[cfg(feature = "tracing")]
-    pub(crate) span: Option<tracing::Span>,
+    pub(crate) span: tracing::Span,
 }
 
 pub(crate) enum ClientResponseFutInner<T, E>
@@ -169,7 +169,7 @@ where
     T: Sink + Stream,
     E: From<Error<T>>,
 {
-    type Item = (T::Item, Option<tracing::Span>);
+    type Item = (T::Item, tracing::Span);
     type Error = E;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let ClientResponse { response, span, .. } = try_ready!(self.fut.poll());

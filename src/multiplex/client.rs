@@ -146,7 +146,7 @@ struct Pending<Tag, Item> {
     tag: Tag,
     tx: tokio_sync::oneshot::Sender<ClientResponse<Item>>,
     #[cfg(feature = "tracing")]
-    span: Option<tracing::Span>,
+    span: tracing::Span,
 }
 
 struct ClientInner<T, E>

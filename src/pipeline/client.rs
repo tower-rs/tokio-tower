@@ -127,7 +127,7 @@ where
 struct Pending<Item> {
     tx: tokio_sync::oneshot::Sender<ClientResponse<Item>>,
     #[cfg(feature = "tracing")]
-    span: Option<tracing::Span>,
+    span: tracing::Span,
 }
 
 struct ClientInner<T, E>
@@ -210,7 +210,7 @@ where
             #[cfg(feature = "tracing")]
             let span = req.span;
             #[cfg(feature = "tracing")]
-            let guard = span.as_ref().map(|s| s.enter());
+            let guard = span.enter();
             #[cfg(feature = "tracing")]
             tracing::event!(Level::TRACE, "retry sending request to Sink");
 
@@ -254,7 +254,7 @@ where
                     #[cfg(feature = "tracing")]
                     let span = req.span;
                     #[cfg(feature = "tracing")]
-                    let guard = span.as_ref().map(|s| s.enter());
+                    let guard = span.enter();
                     #[cfg(feature = "tracing")]
                     tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
 

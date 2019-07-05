@@ -44,11 +44,7 @@ extern crate futures;
 macro_rules! event {
     ($span:expr, $($rest:tt)*) => {
         #[cfg(feature = "tracing")]
-        {
-            if let Some(ref span) = $span {
-                span.in_scope(|| tracing::event!($($rest)*))
-            }
-        }
+        $span.in_scope(|| tracing::event!($($rest)*));
     };
 }
 
