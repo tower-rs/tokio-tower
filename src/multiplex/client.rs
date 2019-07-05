@@ -229,14 +229,22 @@ where
         if let Some((id, ClientRequest { req, res })) = self.waiting.take() {
             #[cfg(feature = "tracing")]
             let span = req.span;
-            event!(span, Level::TRACE, "retry sending request to Sink");
+            #[cfg(feature = "tracing")]
+            let guard = span.enter();
+            #[cfg(feature = "tracing")]
+            tracing::event!(Level::TRACE, "retry sending request to Sink");
 
             if let AsyncSink::NotReady(req) = self
                 .transport
                 .start_send(req.req)
                 .map_err(Error::from_sink_error)?
             {
-                event!(span, Level::TRACE, "Sink still full; queueing");
+                #[cfg(feature = "tracing")]
+                {
+                    tracing::event!(Level::TRACE, "Sink still full; queueing");
+                    drop(guard);
+                }
+
                 let req = Request {
                     req,
                     #[cfg(feature = "tracing")]
@@ -244,7 +252,12 @@ where
                 };
                 self.waiting = Some((id, ClientRequest { req, res }));
             } else {
-                event!(span, Level::TRACE, "request sent");
+                #[cfg(feature = "tracing")]
+                {
+                    tracing::event!(Level::TRACE, "request sent");
+                    drop(guard);
+                }
+
                 self.responses.push_back(Pending {
                     tag: id,
                     tx: res,
@@ -263,11 +276,10 @@ where
 
                     #[cfg(feature = "tracing")]
                     let span = req.span;
-                    event!(
-                        span,
-                        Level::TRACE,
-                        "request received by worker; sending to Sink"
-                    );
+                    #[cfg(feature = "tracing")]
+                    let guard = span.enter();
+                    #[cfg(feature = "tracing")]
+                    tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
 
                     if let AsyncSink::NotReady(req) = self
                         .transport
@@ -275,7 +287,11 @@ where
                         .map_err(Error::from_sink_error)?
                     {
                         assert!(self.waiting.is_none());
-                        event!(span, Level::TRACE, "Sink full; queueing");
+                        #[cfg(feature = "tracing")]
+                        {
+                            tracing::event!(Level::TRACE, "Sink full; queueing");
+                            drop(guard);
+                        }
                         let req = Request {
                             req,
                             #[cfg(feature = "tracing")]
@@ -283,7 +299,11 @@ where
                         };
                         self.waiting = Some((id, ClientRequest { req, res }));
                     } else {
-                        event!(span, Level::TRACE, "request sent");
+                        #[cfg(feature = "tracing")]
+                        {
+                            tracing::event!(Level::TRACE, "request sent");
+                            drop(guard);
+                        }
                         self.responses.push_back(Pending {
                             tag: id,
                             tx: res,
