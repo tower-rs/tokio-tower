@@ -39,15 +39,15 @@ fn integration() {
         move |tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
             tx.ready()
                 .and_then(|mut tx| {
-                    let fut1 = tx.call(Request::new(1));
+                    let fut1 = tx.call(Request::new(1).into());
                     tx.ready().map(move |tx| (tx, fut1))
                 })
                 .and_then(|(mut tx, fut1)| {
-                    let fut2 = tx.call(Request::new(2));
+                    let fut2 = tx.call(Request::new(2).into());
                     tx.ready().map(move |tx| (tx, fut1, fut2))
                 })
                 .and_then(|(mut tx, fut1, fut2)| {
-                    let fut3 = tx.call(Request::new(3));
+                    let fut3 = tx.call(Request::new(3).into());
                     fut1.inspect(|r| r.check(1))
                         .and_then(move |_| fut2)
                         .inspect(|r| r.check(2))
