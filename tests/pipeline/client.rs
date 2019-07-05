@@ -43,7 +43,7 @@ fn it_works() {
     let fut = tx.map_err(PanicError::from).and_then(
         move |tx: Client<AsyncBincodeStream<_, Response, _, _>, _>| {
             tx.ready().and_then(|mut tx| {
-                tx.call(Request::new(1).into())
+                tx.call(Request::new(1))
                     .inspect(|r| r.check(1))
                     .map(move |_| tx)
             })

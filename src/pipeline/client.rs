@@ -206,9 +206,7 @@ where
         // if Stream had a poll_ready, we could call that here to
         // make sure there's room for at least one more request
 
-        if let Some(ClientRequest { req, res }) = self.waiting.take() {
-            #[cfg(feature = "tracing")]
-            let span = req.span;
+        if let Some(ClientRequest { req, span, res }) = self.waiting.take() {
             #[cfg(feature = "tracing")]
             let guard = span.enter();
             #[cfg(feature = "tracing")]
@@ -216,7 +214,7 @@ where
 
             if let AsyncSink::NotReady(req) = self
                 .transport
-                .start_send(req.req)
+                .start_send(req)
                 .map_err(Error::from_sink_error)?
             {
                 #[cfg(feature = "tracing")]
@@ -225,12 +223,9 @@ where
                     drop(guard);
                 }
 
-                let req = Request {
-                    req,
-                    #[cfg(feature = "tracing")]
-                    span,
-                };
-                self.waiting = Some(ClientRequest { req, res });
+                #[cfg(not(feature = "tracing"))]
+                let span = ();
+                self.waiting = Some(ClientRequest { req, span, res });
             } else {
                 #[cfg(feature = "tracing")]
                 {
@@ -250,9 +245,7 @@ where
         while self.waiting.is_none() {
             // send more requests if we have them
             match self.mediator.try_recv() {
-                Async::Ready(Some(ClientRequest { req, res })) => {
-                    #[cfg(feature = "tracing")]
-                    let span = req.span;
+                Async::Ready(Some(ClientRequest { req, span, res })) => {
                     #[cfg(feature = "tracing")]
                     let guard = span.enter();
                     #[cfg(feature = "tracing")]
@@ -260,7 +253,7 @@ where
 
                     if let AsyncSink::NotReady(req) = self
                         .transport
-                        .start_send(req.req)
+                        .start_send(req)
                         .map_err(Error::from_sink_error)?
                     {
                         assert!(self.waiting.is_none());
@@ -269,12 +262,9 @@ where
                             tracing::event!(Level::TRACE, "Sink full; queueing");
                             drop(guard);
                         }
-                        let req = Request {
-                            req,
-                            #[cfg(feature = "tracing")]
-                            span,
-                        };
-                        self.waiting = Some(ClientRequest { req, res });
+                        #[cfg(not(feature = "tracing"))]
+                        let span = ();
+                        self.waiting = Some(ClientRequest { req, span, res });
                     } else {
                         #[cfg(feature = "tracing")]
                         {
@@ -368,7 +358,7 @@ where
     }
 }
 
-impl<T, E> Service<Request<T::SinkItem>> for Client<T, E>
+impl<T, E> Service<T::SinkItem> for Client<T, E>
 where
     T: Sink + Stream,
     E: From<Error<T>>,
@@ -386,10 +376,14 @@ where
             .map_err(|_| E::from(Error::ClientDropped))
     }
 
-    fn call(&mut self, req: Request<T::SinkItem>) -> Self::Future {
+    fn call(&mut self, req: T::SinkItem) -> Self::Future {
         let (tx, rx) = tokio_sync::oneshot::channel();
-        event!(req.span, Level::TRACE, "issuing request");
-        let req = ClientRequest { req: req, res: tx };
+        #[cfg(feature = "tracing")]
+        let span = tracing::Span::current();
+        #[cfg(not(feature = "tracing"))]
+        let span = ();
+        event!(span, Level::TRACE, "issuing request");
+        let req = ClientRequest { req, span, res: tx };
         let fut = match self.mediator.try_send(req) {
             Ok(AsyncSink::Ready) => ClientResponseFutInner::Pending(rx),
             Ok(AsyncSink::NotReady(_)) | Err(_) => {

@@ -1,78 +1,15 @@
 use crate::Error;
 use futures::{Async, Future, Poll, Sink, Stream};
 
-/// A request to be submitted to a tokio-tower client.
-///
-/// The request primarily consists of the inner request type, but may also be annotated with
-/// additional metadata if support for them has been enabled. For the time being, the only
-/// supported meta-data is a `tracing::Span`, which enables tracing the request's path through
-/// the client. To enable this tracing, add this to your dependency on `tokio-tower`:
-///
-/// ```toml
-/// features = ["tracing"]
-/// ```
-#[derive(Clone, Debug)]
-pub struct Request<T> {
-    pub(crate) req: T,
-    #[cfg(feature = "tracing")]
-    pub(crate) span: tracing::Span,
-}
-
-impl<T> Request<T> {
-    /// Create a new tracing request.
-    pub fn new(t: T) -> Self {
-        t.into()
-    }
-}
-
-impl<T> Request<T> {
-    /// Set the span that should be used to trace this request's path through `tokio-tower`.
-    #[cfg(feature = "tracing")]
-    pub fn with_span(mut self, span: tracing::Span) -> Self {
-        self.span = span;
-        self
-    }
-}
-
-impl<T: PartialEq> PartialEq for Request<T> {
-    fn eq(&self, other: &Request<T>) -> bool {
-        self.req.eq(&other.req)
-    }
-}
-impl<T: Eq> Eq for Request<T> {}
-
-impl<T: PartialOrd> PartialOrd for Request<T> {
-    fn partial_cmp(&self, other: &Request<T>) -> Option<std::cmp::Ordering> {
-        self.req.partial_cmp(&other.req)
-    }
-}
-impl<T: Ord> Ord for Request<T> {
-    fn cmp(&self, other: &Request<T>) -> std::cmp::Ordering {
-        self.req.cmp(&other.req)
-    }
-}
-
-impl<T: std::hash::Hash> std::hash::Hash for Request<T> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.req.hash(state)
-    }
-}
-
-impl<T> From<T> for Request<T> {
-    fn from(t: T) -> Self {
-        Request {
-            req: t,
-            #[cfg(feature = "tracing")]
-            span: tracing::Span::none(),
-        }
-    }
-}
-
 pub(crate) struct ClientRequest<T>
 where
     T: Sink + Stream,
 {
-    pub(crate) req: Request<T::SinkItem>,
+    pub(crate) req: T::SinkItem,
+    #[cfg(not(feature = "tracing"))]
+    pub(crate) span: (),
+    #[cfg(feature = "tracing")]
+    pub(crate) span: tracing::Span,
     pub(crate) res: tokio_sync::oneshot::Sender<ClientResponse<T::Item>>,
 }
 

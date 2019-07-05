@@ -52,7 +52,7 @@ mod error;
 mod mediator;
 pub(crate) mod wrappers;
 pub use error::Error;
-pub use wrappers::{ClientResponseFut, Request};
+pub use wrappers::ClientResponseFut;
 
 use futures::{Future, Poll, Sink, Stream};
 use tower_service::Service;
