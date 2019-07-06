@@ -27,7 +27,7 @@ futures = "0.1"
 tokio-executor = "0.1.5"
 tokio-sync = "0.1"
 crossbeam = "0.7"
-tracing = { git = "https://github.com/tokio-rs/tracing", branch = "eliza/current-span", optional = true }
+tracing = { version = "0.1.2", optional = true }
 
 [dev-dependencies]
 tower = "0.1"
