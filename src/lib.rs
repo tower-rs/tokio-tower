@@ -41,18 +41,21 @@
 #[macro_use]
 extern crate futures;
 
+macro_rules! event {
+    ($span:expr, $($rest:tt)*) => {
+        #[cfg(feature = "tracing")]
+        $span.in_scope(|| tracing::event!($($rest)*));
+    };
+}
+
+mod error;
 mod mediator;
+pub(crate) mod wrappers;
+pub use error::Error;
+pub use wrappers::ClientResponseFut;
 
 use futures::{Future, Poll, Sink, Stream};
 use tower_service::Service;
-
-struct ClientRequest<T>
-where
-    T: Sink + Stream,
-{
-    req: T::SinkItem,
-    res: tokio_sync::oneshot::Sender<T::Item>,
-}
 
 /// Creates new `Transport` (i.e., `Sink + Stream`) instances.
 ///
