@@ -1,6 +1,7 @@
 use crossbeam::atomic::AtomicCell;
-use futures::{task, Async, AsyncSink, Poll};
+use futures::{task, Poll};
 use std::sync::Arc;
+use std::task::Context;
 
 enum CellValue<T> {
     /// The sender has left a value.
@@ -28,8 +29,8 @@ impl<T> CellValue<T> {
 
 struct Mediator<T> {
     value: AtomicCell<CellValue<T>>,
-    tx_task: task::AtomicTask,
-    rx_task: task::AtomicTask,
+    tx_task: task::AtomicWaker,
+    rx_task: task::AtomicWaker,
 }
 
 pub(crate) struct Receiver<T>(Arc<Mediator<T>>);
@@ -53,15 +54,15 @@ impl<T> Drop for Sender<T> {
                 self.inner.value.swap(CellValue::Fin(None));
             }
         }
-        self.inner.rx_task.notify();
+        self.inner.rx_task.wake();
     }
 }
 
 pub(crate) fn new<T>() -> (Sender<T>, Receiver<T>) {
     let m = Arc::new(Mediator {
         value: AtomicCell::new(CellValue::None),
-        tx_task: task::AtomicTask::new(),
-        rx_task: task::AtomicTask::new(),
+        tx_task: task::AtomicWaker::new(),
+        rx_task: task::AtomicWaker::new(),
     });
 
     (
@@ -73,30 +74,35 @@ pub(crate) fn new<T>() -> (Sender<T>, Receiver<T>) {
     )
 }
 
+pub(crate) enum TrySendError<T> {
+    Pending(T),
+    Closed(T),
+}
+
 impl<T> Sender<T> {
     /// Returns true if there is a free slot for a client request.
     ///
     /// This method errors if the receiver has disconnected.
-    pub(crate) fn poll_ready(&mut self) -> Poll<(), ()> {
+    pub(crate) fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), ()>> {
         // register in case we can't send
-        self.inner.tx_task.register();
+        self.inner.tx_task.register(cx.waker());
         match self.inner.value.swap(CellValue::None) {
             CellValue::Some(t) => {
                 // whoops -- put it back
                 self.inner.value.swap(CellValue::Some(t));
                 // notify in case the receiver just missed us
-                self.inner.rx_task.notify();
-                Ok(Async::NotReady)
+                self.inner.rx_task.wake();
+                Poll::Pending
             }
             CellValue::None => {
                 self.checked_ready = true;
-                Ok(Async::Ready(()))
+                Poll::Ready(Ok(()))
             }
             f @ CellValue::Fin(_) => {
                 // the receiver must have gone away (since we can't have gone away)
                 // put the Fin marker back for ourselves to see again later
                 self.inner.value.swap(f);
-                Err(())
+                Poll::Ready(Err(()))
             }
         }
     }
@@ -105,9 +111,9 @@ impl<T> Sender<T> {
     ///
     /// This method returns `NotReady` if `is_ready` has not previously returned `true`.
     /// This method errors if the receiver has disconnected since `poll_ready`.
-    pub(crate) fn try_send(&mut self, t: T) -> Result<AsyncSink<T>, T> {
+    pub(crate) fn try_send(&mut self, t: T) -> Result<(), TrySendError<T>> {
         if !self.checked_ready {
-            return Ok(AsyncSink::NotReady(t));
+            return Err(TrySendError::Pending(t));
         }
 
         // we're suppposed to _know_ that there is a slot here,
@@ -119,16 +125,16 @@ impl<T> Sender<T> {
                 // the receiver must have gone away (since we can't have gone away)
                 // put the Fin marker back for ourselves to see again later
                 if let CellValue::Some(t) = self.inner.value.swap(f) {
-                    return Err(t);
+                    return Err(TrySendError::Closed(t));
                 } else {
-                    unreachable!("where did t go?");
+                    unreachable!("where did it go?");
                 }
             }
         }
 
         self.checked_ready = false;
-        self.inner.rx_task.notify();
-        Ok(AsyncSink::Ready)
+        self.inner.rx_task.wake();
+        Ok(())
     }
 }
 
@@ -136,13 +142,13 @@ impl<T> Receiver<T> {
     /// Attempts to receive a value sent by the client.
     ///
     /// `Ready(None)` is returned if the client has disconnected.
-    pub(crate) fn try_recv(&mut self) -> Async<Option<T>> {
-        self.0.rx_task.register();
+    pub(crate) fn try_recv(&mut self, cx: &mut Context) -> Poll<Option<T>> {
+        self.0.rx_task.register(cx.waker());
         match self.0.value.swap(CellValue::None) {
             CellValue::Some(v) => {
                 // let the sender know there's room now
-                self.0.tx_task.notify();
-                Async::Ready(Some(v))
+                self.0.tx_task.wake();
+                Poll::Ready(Some(v))
             }
             CellValue::Fin(Some(v)) => {
                 // leave a None in there so we know to close after
@@ -152,10 +158,10 @@ impl<T> Receiver<T> {
                 } else {
                     self.0.value.store(CellValue::Fin(None));
                 }
-                Async::Ready(Some(v))
+                Poll::Ready(Some(v))
             }
-            CellValue::Fin(None) => Async::Ready(None),
-            CellValue::None => Async::NotReady,
+            CellValue::Fin(None) => Poll::Ready(None),
+            CellValue::None => Poll::Pending,
         }
     }
 }
@@ -176,26 +182,26 @@ mod test {
         let mut mt = MockTask::new();
 
         let (mut tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
+        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
         assert!(!mt.is_notified());
-        assert_eq!(mt.enter(|| tx.try_send(42)), Ok(AsyncSink::Ready));
+        assert_eq!(mt.enter(|| tx.try_send(42)), Ok(()));
         assert!(!mt.is_notified());
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(Some(42)));
+        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(Some(42)));
 
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
-        assert_eq!(mt.enter(|| tx.try_send(43)), Ok(AsyncSink::Ready));
+        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
+        assert_eq!(mt.enter(|| tx.try_send(43)), Ok(()));
         assert!(mt.is_notified());
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::NotReady));
-        assert_eq!(mt.enter(|| tx.try_send(44)), Ok(AsyncSink::NotReady(44)));
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(Some(43)));
+        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Pending);
+        assert_eq!(mt.enter(|| tx.try_send(44)), Err(TrySendError::Pending(44)));
+        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(Some(43)));
         assert!(mt.is_notified()); // sender is notified
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
-        assert_eq!(mt.enter(|| tx.try_send(44)), Ok(AsyncSink::Ready));
+        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
+        assert_eq!(mt.enter(|| tx.try_send(44)), Ok(()));
         assert!(mt.is_notified());
 
         mt.enter(|| drop(tx));
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(Some(44)));
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(None));
+        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(Some(44)));
+        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(None));
     }
 
     #[test]
@@ -203,11 +209,11 @@ mod test {
         let mut mt = MockTask::new();
 
         let (tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::NotReady);
+        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Pending);
         assert!(!mt.is_notified());
         mt.enter(|| drop(tx));
         assert!(mt.is_notified());
-        assert_eq!(mt.enter(|| rx.try_recv()), Async::Ready(None));
+        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(None));
     }
 
     #[test]
@@ -215,9 +221,9 @@ mod test {
         let mut mt = MockTask::new();
 
         let (mut tx, rx) = new::<usize>();
-        assert_eq!(mt.enter(|| tx.poll_ready()), Ok(Async::Ready(())));
+        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
         mt.enter(|| drop(rx));
-        assert_eq!(mt.enter(|| tx.poll_ready()), Err(()));
-        assert_eq!(mt.enter(|| tx.try_send(42)), Err(42));
+        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Err(())));
+        assert_eq!(mt.enter(|| tx.try_send(42)), Err(TrySendError::Closed(42)));
     }
 }

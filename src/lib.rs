@@ -38,9 +38,6 @@
 //! [`pipeline::Client`]), and the server helper as `Server` in the same place.
 #![deny(missing_docs)]
 
-#[macro_use]
-extern crate futures;
-
 macro_rules! event {
     ($span:expr, $($rest:tt)*) => {
         #[cfg(feature = "tracing")]
@@ -52,9 +49,9 @@ mod error;
 mod mediator;
 pub(crate) mod wrappers;
 pub use error::Error;
-pub use wrappers::ClientResponseFut;
 
-use futures::{Future, Poll, Sink, Stream};
+use futures::{Future, Poll, Sink, TryStream};
+use std::task::Context;
 use tower_service::Service;
 
 /// Creates new `Transport` (i.e., `Sink + Stream`) instances.
@@ -74,14 +71,14 @@ pub trait MakeTransport<Target, Request>: self::sealed::Sealed<Target, Request> 
     type SinkError;
 
     /// The `Sink + Stream` implementation created by this factory
-    type Transport: Stream<Item = Self::Item, Error = Self::Error>
-        + Sink<SinkItem = Request, SinkError = Self::SinkError>;
+    type Transport: TryStream<Ok = Self::Item, Error = Self::Error>
+        + Sink<Request, Error = Self::SinkError>;
 
     /// Errors produced while building a transport.
     type MakeError;
 
     /// The future of the `Service` instance.
-    type Future: Future<Item = Self::Transport, Error = Self::MakeError>;
+    type Future: Future<Output = Result<Self::Transport, Self::MakeError>>;
 
     /// Returns `Ready` when the factory is able to create more transports.
     ///
@@ -92,7 +89,7 @@ pub trait MakeTransport<Target, Request>: self::sealed::Sealed<Target, Request> 
     /// This is a **best effort** implementation. False positives are permitted.
     /// It is permitted for the service to return `Ready` from a `poll_ready`
     /// call and the next invocation of `make_transport` results in an error.
-    fn poll_ready(&mut self) -> Poll<(), Self::MakeError>;
+    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::MakeError>>;
 
     /// Create and return a new transport asynchronously.
     fn make_transport(&mut self, target: Target) -> Self::Future;
@@ -101,24 +98,24 @@ pub trait MakeTransport<Target, Request>: self::sealed::Sealed<Target, Request> 
 impl<M, T, Target, Request> self::sealed::Sealed<Target, Request> for M
 where
     M: Service<Target, Response = T>,
-    T: Stream + Sink<SinkItem = Request>,
+    T: TryStream + Sink<Request>,
 {
 }
 
 impl<M, T, Target, Request> MakeTransport<Target, Request> for M
 where
     M: Service<Target, Response = T>,
-    T: Stream + Sink<SinkItem = Request>,
+    T: TryStream + Sink<Request>,
 {
-    type Item = T::Item;
-    type Error = T::Error;
-    type SinkError = T::SinkError;
+    type Item = <T as TryStream>::Ok;
+    type Error = <T as TryStream>::Error;
+    type SinkError = <T as Sink<Request>>::Error;
     type Transport = T;
     type MakeError = M::Error;
     type Future = M::Future;
 
-    fn poll_ready(&mut self) -> Poll<(), Self::MakeError> {
-        Service::poll_ready(self)
+    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::MakeError>> {
+        Service::poll_ready(self, cx)
     }
 
     fn make_transport(&mut self, target: Target) -> Self::Future {
@@ -130,5 +127,5 @@ mod sealed {
     pub trait Sealed<A, B> {}
 }
 
-pub mod multiplex;
+//pub mod multiplex;
 pub mod pipeline;

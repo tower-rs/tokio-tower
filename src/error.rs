@@ -1,18 +1,18 @@
-use futures::{Sink, Stream};
+use futures::{Sink, TryStream};
 use std::{error, fmt};
 
 /// An error that occurred while servicing a request.
-pub enum Error<T>
+pub enum Error<T, I>
 where
-    T: Sink + Stream,
+    T: Sink<I> + TryStream,
 {
     /// The underlying transport failed to send a request.
-    BrokenTransportSend(T::SinkError),
+    BrokenTransportSend(<T as Sink<I>>::Error),
 
     /// The underlying transport failed while attempting to receive a response.
     ///
     /// If `None`, the transport closed without error while there were pending requests.
-    BrokenTransportRecv(Option<T::Error>),
+    BrokenTransportRecv(Option<<T as TryStream>::Error>),
 
     /// Attempted to issue a `call` when no more requests can be in flight.
     ///
@@ -23,11 +23,11 @@ where
     ClientDropped,
 }
 
-impl<T> fmt::Display for Error<T>
+impl<T, I> fmt::Display for Error<T, I>
 where
-    T: Sink + Stream,
-    T::SinkError: fmt::Display,
-    T::Error: fmt::Display,
+    T: Sink<I> + TryStream,
+    <T as Sink<I>>::Error: fmt::Display,
+    <T as TryStream>::Error: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -40,11 +40,11 @@ where
     }
 }
 
-impl<T> fmt::Debug for Error<T>
+impl<T, I> fmt::Debug for Error<T, I>
 where
-    T: Sink + Stream,
-    T::SinkError: fmt::Debug,
-    T::Error: fmt::Debug,
+    T: Sink<I> + TryStream,
+    <T as Sink<I>>::Error: fmt::Debug,
+    <T as TryStream>::Error: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -57,11 +57,11 @@ where
     }
 }
 
-impl<T> error::Error for Error<T>
+impl<T, I> error::Error for Error<T, I>
 where
-    T: Sink + Stream,
-    T::SinkError: error::Error,
-    T::Error: error::Error,
+    T: Sink<I> + TryStream,
+    <T as Sink<I>>::Error: error::Error,
+    <T as TryStream>::Error: error::Error,
 {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
@@ -82,15 +82,15 @@ where
     }
 }
 
-impl<T> Error<T>
+impl<T, I> Error<T, I>
 where
-    T: Sink + Stream,
+    T: Sink<I> + TryStream,
 {
-    pub(crate) fn from_sink_error(e: T::SinkError) -> Self {
+    pub(crate) fn from_sink_error(e: <T as Sink<I>>::Error) -> Self {
         Error::BrokenTransportSend(e)
     }
 
-    pub(crate) fn from_stream_error(e: T::Error) -> Self {
+    pub(crate) fn from_stream_error(e: <T as TryStream>::Error) -> Self {
         Error::BrokenTransportRecv(Some(e))
     }
 }
