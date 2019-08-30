@@ -1,13 +1,13 @@
 use crate::mediator;
 use crate::wrappers::*;
-use std::pin::Pin;
 use crate::Error;
 use crate::MakeTransport;
-use std::task::Context;
-use futures::{Future, ready, Poll, Sink, TryStream};
+use futures::{ready, Future, Poll, Sink, TryStream};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::{atomic, Arc};
+use std::task::Context;
 use std::{error, fmt};
 use tower_service::Service;
 
@@ -62,9 +62,7 @@ where
 
     fn call(&mut self, target: Target) -> Self::Future {
         let maker = self.t_maker.make_transport(target);
-        Box::pin(async move {
-            Ok(Client::new(maker.await.map_err(SpawnError::Inner)?))
-        })
+        Box::pin(async move { Ok(Client::new(maker.await.map_err(SpawnError::Inner)?)) })
     }
 
     fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
@@ -142,8 +140,7 @@ where
     {
         let (tx, rx) = mediator::new();
         let in_flight = Arc::new(atomic::AtomicUsize::new(0));
-        tokio_executor::spawn(
-            {
+        tokio_executor::spawn({
             let c = ClientInner {
                 mediator: rx,
                 responses: Default::default(),
@@ -157,8 +154,7 @@ where
                     on_service_error(e);
                 }
             }
-            }
-        );
+        });
         Client {
             mediator: tx,
             in_flight,
@@ -197,19 +193,19 @@ where
                     #[cfg(feature = "tracing")]
                     tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
 
-                        transport
-                            .as_mut()
+                    transport
+                        .as_mut()
                         .start_send(req)
                         .map_err(Error::from_sink_error)?;
                     tracing::event!(Level::TRACE, "request sent");
                     drop(guard);
 
-                        this.responses.push_back(Pending {
-                            tx: res,
-                            #[cfg(feature = "tracing")]
-                            span,
-                        });
-                        this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
+                    this.responses.push_back(Pending {
+                        tx: res,
+                        #[cfg(feature = "tracing")]
+                        span,
+                    });
+                    this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
                 }
                 Poll::Ready(None) => {
                     // XXX: should we "give up" the Sink::poll_ready here?
@@ -232,7 +228,10 @@ where
                 // poll_close() implies poll_flush()
                 //
                 // FIXME: if close returns Ready, are we allowed to call close again?
-                let _ = transport.as_mut().poll_close(cx).map_err(Error::from_sink_error)?;
+                let _ = transport
+                    .as_mut()
+                    .poll_close(cx)
+                    .map_err(Error::from_sink_error)?;
             } else {
                 let _ = transport
                     .as_mut()
@@ -246,7 +245,10 @@ where
         // note that we *could* have this just be a loop, but we don't want to poll the stream
         // if we know there's nothing for it to produce.
         while this.in_flight.load(atomic::Ordering::Acquire) != 0 {
-            match ready!(transport.as_mut().try_poll_next(cx)).transpose().map_err(Error::from_stream_error)? {
+            match ready!(transport.as_mut().try_poll_next(cx))
+                .transpose()
+                .map_err(Error::from_stream_error)?
+            {
                 Some(r) => {
                     // ignore send failures
                     // the client may just no longer care about the response
@@ -272,9 +274,7 @@ where
             }
         }
 
-        if this.finish
-            && this.in_flight.load(atomic::Ordering::Acquire) == 0
-        {
+        if this.finish && this.in_flight.load(atomic::Ordering::Acquire) == 0 {
             // we're completely done once close() finishes!
             ready!(transport.poll_close(cx)).map_err(Error::from_sink_error)?;
             return Poll::Ready(Ok(()));
@@ -303,8 +303,7 @@ where
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), E>> {
-        Poll::Ready(ready!(self.mediator.poll_ready(cx))
-            .map_err(|_| E::from(Error::ClientDropped)))
+        Poll::Ready(ready!(self.mediator.poll_ready(cx)).map_err(|_| E::from(Error::ClientDropped)))
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
@@ -323,7 +322,7 @@ where
                         // TODO: provide a variant that lets you get at the span too
                         event!(r.span, tracing::Level::TRACE, "response returned");
                         Ok(r.response)
-                    },
+                    }
                     Err(_) => Err(E::from(Error::ClientDropped)),
                 },
                 Err(_) => Err(E::from(Error::TransportFull)),
