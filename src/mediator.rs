@@ -74,6 +74,7 @@ pub(crate) fn new<T>() -> (Sender<T>, Receiver<T>) {
     )
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TrySendError<T> {
     Pending(T),
     Closed(T),
@@ -175,33 +176,36 @@ impl<T> Drop for Receiver<T> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use tokio_mock_task::MockTask;
+    use tokio_test::task::MockTask;
 
     #[test]
     fn basic() {
         let mut mt = MockTask::new();
 
         let (mut tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
-        assert!(!mt.is_notified());
-        assert_eq!(mt.enter(|| tx.try_send(42)), Ok(()));
-        assert!(!mt.is_notified());
-        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(Some(42)));
+        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
+        assert!(!mt.is_woken());
+        assert_eq!(mt.enter(|_| tx.try_send(42)), Ok(()));
+        assert!(!mt.is_woken());
+        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(Some(42)));
 
-        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
-        assert_eq!(mt.enter(|| tx.try_send(43)), Ok(()));
-        assert!(mt.is_notified());
-        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Pending);
-        assert_eq!(mt.enter(|| tx.try_send(44)), Err(TrySendError::Pending(44)));
-        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(Some(43)));
-        assert!(mt.is_notified()); // sender is notified
-        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
-        assert_eq!(mt.enter(|| tx.try_send(44)), Ok(()));
-        assert!(mt.is_notified());
+        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
+        assert_eq!(mt.enter(|_| tx.try_send(43)), Ok(()));
+        assert!(mt.is_woken());
+        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Pending);
+        assert_eq!(
+            mt.enter(|_| tx.try_send(44)),
+            Err(TrySendError::Pending(44))
+        );
+        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(Some(43)));
+        assert!(mt.is_woken()); // sender is notified
+        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
+        assert_eq!(mt.enter(|_| tx.try_send(44)), Ok(()));
+        assert!(mt.is_woken());
 
-        mt.enter(|| drop(tx));
-        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(Some(44)));
-        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(None));
+        mt.enter(|_| drop(tx));
+        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(Some(44)));
+        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(None));
     }
 
     #[test]
@@ -209,11 +213,11 @@ mod test {
         let mut mt = MockTask::new();
 
         let (tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Pending);
-        assert!(!mt.is_notified());
-        mt.enter(|| drop(tx));
-        assert!(mt.is_notified());
-        assert_eq!(mt.enter(|| rx.try_recv()), Poll::Ready(None));
+        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Pending);
+        assert!(!mt.is_woken());
+        mt.enter(|_| drop(tx));
+        assert!(mt.is_woken());
+        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(None));
     }
 
     #[test]
@@ -221,9 +225,9 @@ mod test {
         let mut mt = MockTask::new();
 
         let (mut tx, rx) = new::<usize>();
-        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Ok(())));
-        mt.enter(|| drop(rx));
-        assert_eq!(mt.enter(|| tx.poll_ready()), Poll::Ready(Err(())));
-        assert_eq!(mt.enter(|| tx.try_send(42)), Err(TrySendError::Closed(42)));
+        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
+        mt.enter(|_| drop(rx));
+        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Err(())));
+        assert_eq!(mt.enter(|_| tx.try_send(42)), Err(TrySendError::Closed(42)));
     }
 }
