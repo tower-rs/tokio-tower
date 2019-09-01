@@ -17,9 +17,9 @@ use std::task::Context;
 pub mod client;
 pub use self::client::{Client, TagStore};
 
-///// Server bindings for a multiplexed protocol.
-//pub mod server;
-//pub use self::server::Server;
+/// Server bindings for a multiplexed protocol.
+pub mod server;
+pub use self::server::Server;
 
 /// A convenience wrapper that lets you take separate transport and tag store types and use them as
 /// a single [`client::Transport`].
