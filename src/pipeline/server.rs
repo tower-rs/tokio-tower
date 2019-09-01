@@ -25,12 +25,12 @@ where
 
 // NOTE
 // pending, in_flight, and finish are all Unpin already
-// service is bounded by Unpin (for now)
+// we never give out a Pin to the Service, so moving it is fine
 // we never move transport once pinned, nor expose &mut to it
 impl<T, S> Unpin for Server<T, S>
 where
     T: Sink<S::Response> + TryStream,
-    S: Service<<T as TryStream>::Ok> + Unpin,
+    S: Service<<T as TryStream>::Ok>,
 {
 }
 
@@ -182,7 +182,7 @@ where
 impl<T, S> Future for Server<T, S>
 where
     T: Sink<S::Response> + TryStream,
-    S: Service<<T as TryStream>::Ok> + Unpin,
+    S: Service<<T as TryStream>::Ok>,
 {
     type Output = Result<(), Error<T, S>>;
 
