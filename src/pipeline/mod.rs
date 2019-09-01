@@ -12,6 +12,6 @@
 pub mod client;
 pub use self::client::Client;
 
-///// Server bindings for a pipelined protocol.
-//pub mod server;
-//pub use self::server::Server;
+/// Server bindings for a pipelined protocol.
+pub mod server;
+pub use self::server::Server;
