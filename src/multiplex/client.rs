@@ -2,12 +2,17 @@ use crate::mediator;
 use crate::wrappers::*;
 use crate::Error;
 use crate::MakeTransport;
-use futures::{ready, Future, Poll, Sink, TryStream};
+use futures_core::{
+    future::Future,
+    ready,
+    stream::TryStream,
+    task::{Context, Poll},
+};
+use futures_sink::Sink;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::{atomic, Arc};
-use std::task::Context;
 use std::{error, fmt};
 use tower_service::Service;
 

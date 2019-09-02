@@ -50,8 +50,12 @@ mod mediator;
 pub(crate) mod wrappers;
 pub use error::Error;
 
-use futures::{Future, Poll, Sink, TryStream};
-use std::task::Context;
+use futures_core::{
+    future::Future,
+    stream::TryStream,
+    task::{Context, Poll},
+};
+use futures_sink::Sink;
 use tower_service::Service;
 
 /// Creates new `Transport` (i.e., `Sink + Stream`) instances.

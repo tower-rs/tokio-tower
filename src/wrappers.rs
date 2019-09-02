@@ -1,4 +1,5 @@
-use futures::{Sink, TryStream};
+use futures_core::stream::TryStream;
+use futures_sink::Sink;
 
 pub(crate) struct ClientRequest<T, I>
 where

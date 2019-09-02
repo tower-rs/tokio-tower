@@ -1,5 +1,6 @@
 use crossbeam::atomic::AtomicCell;
-use futures::{task, Poll};
+use futures_core::task::Poll;
+use futures_util::task;
 use std::sync::Arc;
 use std::task::Context;
 

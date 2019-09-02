@@ -9,9 +9,12 @@
 //! Note: multiplexing with the max number of in-flight requests set to 1 implies that for each
 //! request, the response must be received before sending another request on the same connection.
 
-use futures::{Poll, Sink, Stream, TryStream};
+use futures_core::{
+    stream::{Stream, TryStream},
+    task::{Context, Poll},
+};
+use futures_sink::Sink;
 use std::pin::Pin;
-use std::task::Context;
 
 /// Client bindings for a multiplexed protocol.
 pub mod client;

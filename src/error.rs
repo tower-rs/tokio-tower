@@ -1,4 +1,5 @@
-use futures::{Sink, TryStream};
+use futures_core::stream::TryStream;
+use futures_sink::Sink;
 use std::{error, fmt};
 
 /// An error that occurred while servicing a request.

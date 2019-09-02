@@ -3,8 +3,7 @@ use async_bincode::*;
 use tokio;
 use tokio_tower::pipeline::Client;
 use tower_service::Service;
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
+use futures_util::{sink::SinkExt, stream::StreamExt};
 
 #[tokio::test]
 async fn it_works() {

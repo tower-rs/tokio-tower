@@ -2,10 +2,11 @@
 extern crate serde_derive;
 
 use std::task::{Poll, Context};
+use futures_util::future::poll_fn;
 use tower_service::Service;
 
 async fn ready<S: Service<Request>, Request>(svc: &mut S) -> Result<(), S::Error> {
-    futures::future::poll_fn(|cx| svc.poll_ready(cx)).await
+    poll_fn(|cx| svc.poll_ready(cx)).await
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,14 +75,14 @@ struct EchoService;
 impl Service<Request> for EchoService {
     type Response = Response;
     type Error = ();
-    type Future = futures::future::Ready<Result<Self::Response, Self::Error>>;
+    type Future = futures_util::future::Ready<Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, r: Request) -> Self::Future {
-        futures::future::ok(Response::from(r))
+        futures_util::future::ok(Response::from(r))
     }
 }
 
