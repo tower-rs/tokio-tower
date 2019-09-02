@@ -192,9 +192,9 @@ where
 
             // send more requests if we have them
             match this.mediator.try_recv(cx) {
-                Poll::Ready(Some(ClientRequest { req, span, res })) => {
+                Poll::Ready(Some(ClientRequest { req, span: _span, res })) => {
                     #[cfg(feature = "tracing")]
-                    let guard = span.enter();
+                    let guard = _span.enter();
                     #[cfg(feature = "tracing")]
                     tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
 
@@ -202,13 +202,15 @@ where
                         .as_mut()
                         .start_send(req)
                         .map_err(Error::from_sink_error)?;
+                    #[cfg(feature = "tracing")]
                     tracing::event!(Level::TRACE, "request sent");
+                    #[cfg(feature = "tracing")]
                     drop(guard);
 
                     this.responses.push_back(Pending {
                         tx: res,
                         #[cfg(feature = "tracing")]
-                        span,
+                        span: _span,
                     });
                     this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
                 }
