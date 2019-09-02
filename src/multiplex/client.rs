@@ -25,6 +25,10 @@ use tracing::Level;
 
 /// A transport capable of transporting tagged requests and responses must implement this
 /// interface in order to be used with a [`Client`].
+///
+/// Note that we require self to be pinned here as `assign_tag` and `finish_tag` are called on the
+/// transport, which is already pinned so that we can use it as a `Stream + Sink`. It wouldn't be
+/// safe to then give out `&mut` to the transport without `Pin`, as that might move the transport.
 pub trait TagStore<Request, Response> {
     /// The type used for tags.
     type Tag: Eq;
