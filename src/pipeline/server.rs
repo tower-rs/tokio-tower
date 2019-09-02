@@ -6,6 +6,7 @@ use futures_core::{
 };
 use futures_sink::Sink;
 use futures_util::stream::FuturesOrdered;
+use pin_project::pin_project;
 use std::pin::Pin;
 use std::{error, fmt};
 use tower_service::Service;
@@ -15,12 +16,15 @@ use tower_service::Service;
 /// request-at-a-time protocol transport. In particular, it wraps a transport that implements
 /// `Sink<SinkItem = Response>` and `Stream<Item = Request>` with the necessary bookkeeping to
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
+#[pin_project]
 pub struct Server<T, S>
 where
     T: Sink<S::Response> + TryStream,
     S: Service<<T as TryStream>::Ok>,
 {
+    #[pin]
     pending: FuturesOrdered<S::Future>,
+    #[pin]
     transport: T,
     service: S,
 
@@ -180,18 +184,13 @@ where
 {
     type Output = Result<(), Error<T, S>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // go through the deref so we can do partial borrows
-        // NOTE: this is safe because we do not move self below, and:
-        //  - pending, in_flight, and finish are all Unpin already
-        //  - we never Pin the Service, so calling &mut methods on it is fine
-        //  - transport is only accessed through Pin
-        //  - pending is only accessed through Pin
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = self.project();
 
         // we never move transport or pending, nor do we ever hand out &mut to it
-        let mut transport = unsafe { Pin::new_unchecked(&mut this.transport) };
-        let mut pending = Pin::new(&mut this.pending);
+        let mut transport: Pin<_> = this.transport;
+        let mut pending: Pin<_> = this.pending;
 
         loop {
             // first, poll pending futures to see if any have produced responses
@@ -211,7 +210,7 @@ where
                             .as_mut()
                             .start_send(rsp)
                             .map_err(Error::from_sink_error)?;
-                        this.in_flight -= 1;
+                        *this.in_flight -= 1;
                     }
                     _ => {
                         // XXX: should we "release" the poll_ready we got from the Sink?
@@ -226,14 +225,14 @@ where
                 .poll_flush(cx)
                 .map_err(Error::from_sink_error)?
             {
-                if this.finish && pending.as_mut().is_empty() {
+                if *this.finish && pending.as_mut().is_empty() {
                     // there are no more requests
                     // and we've finished all the work!
                     return Poll::Ready(Ok(()));
                 }
             }
 
-            if this.finish {
+            if *this.finish {
                 // there's still work to be done, but there are no more requests
                 // so no need to check the incoming transport
                 return Poll::Pending;
@@ -249,11 +248,11 @@ where
                 // the service is ready, and we have another request!
                 // you know what that means:
                 pending.push(this.service.call(rq));
-                this.in_flight += 1;
+                *this.in_flight += 1;
             } else {
                 // there are no more requests coming -- shut down
-                assert!(!this.finish);
-                this.finish = true;
+                assert!(!*this.finish);
+                *this.finish = true;
             }
         }
     }

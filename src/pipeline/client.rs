@@ -15,6 +15,7 @@ use std::pin::Pin;
 use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
+use pin_project::pin_project;
 
 #[cfg(feature = "tracing")]
 use tracing::Level;
@@ -103,12 +104,14 @@ struct Pending<Item> {
     span: tracing::Span,
 }
 
+#[pin_project]
 struct ClientInner<T, E, Request>
 where
     T: Sink<Request> + TryStream,
 {
     mediator: mediator::Receiver<ClientRequest<T, Request>>,
     responses: VecDeque<Pending<T::Ok>>,
+    #[pin]
     transport: T,
 
     in_flight: Arc<atomic::AtomicUsize>,
@@ -176,16 +179,12 @@ where
 {
     type Output = Result<(), E>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // go through the deref so we can do partial borrows
-        // NOTE: this is safe because we do not move self below, and:
-        //  - in_flight, error, finish, and mediator are all Unpin
-        //  - we never construct a Pin into responses, so we never enter into the Pin contract
-        //  - we only use transport through the Pin we construct below
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = self.project();
 
         // we never move transport, nor do we ever hand out &mut to it
-        let mut transport = unsafe { Pin::new_unchecked(&mut this.transport) };
+        let mut transport: Pin<_> = this.transport;
 
         while let Poll::Ready(r) = transport.as_mut().poll_ready(cx) {
             if let Err(e) = r {
@@ -218,7 +217,7 @@ where
                 }
                 Poll::Ready(None) => {
                     // XXX: should we "give up" the Sink::poll_ready here?
-                    this.finish = true;
+                    *this.finish = true;
                     break;
                 }
                 Poll::Pending => {
@@ -231,7 +230,7 @@ where
         if this.in_flight.load(atomic::Ordering::Acquire) != 0 {
             // flush out any stuff we've sent in the past
             // don't return on NotReady since we have to check for responses too
-            if this.finish {
+            if *this.finish {
                 // we're closing up shop!
                 //
                 // poll_close() implies poll_flush()
@@ -283,7 +282,7 @@ where
             }
         }
 
-        if this.finish && this.in_flight.load(atomic::Ordering::Acquire) == 0 {
+        if *this.finish && this.in_flight.load(atomic::Ordering::Acquire) == 0 {
             // we're completely done once close() finishes!
             ready!(transport.poll_close(cx)).map_err(Error::from_sink_error)?;
             return Poll::Ready(Ok(()));
