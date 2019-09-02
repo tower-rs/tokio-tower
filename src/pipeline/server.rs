@@ -28,17 +28,6 @@ where
     finish: bool,
 }
 
-// NOTE
-// pending, in_flight, and finish are all Unpin already
-// we never give out a Pin to the Service, so moving it is fine
-// we never move transport once pinned, nor expose &mut to it
-impl<T, S> Unpin for Server<T, S>
-where
-    T: Sink<S::Response> + TryStream,
-    S: Service<<T as TryStream>::Ok>,
-{
-}
-
 /// An error that occurred while servicing a request.
 pub enum Error<T, S>
 where
@@ -191,13 +180,18 @@ where
 {
     type Output = Result<(), Error<T, S>>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // go through the deref so we can do partial borrows
-        let this = &mut *self;
+        // NOTE: this is safe because we do not move self below, and:
+        //  - pending, in_flight, and finish are all Unpin already
+        //  - we never Pin the Service, so calling &mut methods on it is fine
+        //  - transport is only accessed through Pin
+        //  - pending is only accessed through Pin
+        let this = unsafe { self.get_unchecked_mut() };
 
         // we never move transport or pending, nor do we ever hand out &mut to it
         let mut transport = unsafe { Pin::new_unchecked(&mut this.transport) };
-        let mut pending = unsafe { Pin::new_unchecked(&mut this.pending) };
+        let mut pending = Pin::new(&mut this.pending);
 
         loop {
             // first, poll pending futures to see if any have produced responses

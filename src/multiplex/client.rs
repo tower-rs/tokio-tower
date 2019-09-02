@@ -136,8 +136,6 @@ where
     error: PhantomData<fn(E)>,
 }
 
-impl<T, E, Request> Unpin for ClientInner<T, E, Request> where T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok> {}
-
 impl<T, E, Request> Client<T, E, Request>
 where
     T: Sink<Request>
@@ -201,9 +199,13 @@ where
 {
     type Output = Result<(), E>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // go through the deref so we can do partial borrows
-        let this = &mut *self;
+        // NOTE: this is safe because we do not move self below, and:
+        //  - in_flight, error, finish, and mediator are all Unpin
+        //  - we never construct a Pin into responses, so we never enter into the Pin contract
+        //  - we only use transport through the Pin we construct below
+        let this = unsafe { self.get_unchecked_mut() };
 
         // we never move transport, nor do we ever hand out &mut to it
         let mut transport = unsafe { Pin::new_unchecked(&mut this.transport) };
