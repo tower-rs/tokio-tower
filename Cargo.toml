@@ -29,7 +29,7 @@ futures-sink-preview = "=0.3.0-alpha.18"
 tokio-executor = "=0.2.0-alpha.4"
 tokio-sync = "=0.2.0-alpha.4"
 crossbeam = "0.7"
-tracing = { version = "<=0.1.5,>=0.1.2", optional = true }
+tracing = { version = "0.1.2", optional = true }
 pin-project = "0.4.0-alpha.7"
 
 [dev-dependencies]
