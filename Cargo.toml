@@ -21,18 +21,18 @@ log = ["tracing/log"]
 default = ["tracing"]
 
 [dependencies]
-tower-service = "0.3.0-alpha.1"
+tower-service = "=0.3.0-alpha.1"
 tower-load = { git = "https://github.com/tower-rs/tower.git" }
-futures-preview = "0.3.0-alpha.18"
-tokio-executor = "0.2.0-alpha.4"
-tokio-sync = "0.2.0-alpha.4"
+futures-preview = "=0.3.0-alpha.18"
+tokio-executor = "=0.2.0-alpha.4"
+tokio-sync = "=0.2.0-alpha.4"
 crossbeam = "0.7"
 tracing = { version = "<=0.1.5,>=0.1.2", optional = true }
 
 [dev-dependencies]
-tokio = "0.2.0-alpha.4"
+tokio = "=0.2.0-alpha.4"
 serde = "1.0"
 serde_derive = "1.0"
 async-bincode = { git = "https://github.com/jonhoo/async-bincode", branch = "async" }
 slab = "0.4"
-tokio-test = "0.2.0-alpha.4"
+tokio-test = "=0.2.0-alpha.4"
