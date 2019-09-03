@@ -1,6 +1,6 @@
 [package]
 name = "tokio-tower"
-version = "0.1.1"
+version = "0.2.0-alpha.1"
 edition = "2018"
 
 description = "Bridging the protocol gap between Tokio and Tower"
