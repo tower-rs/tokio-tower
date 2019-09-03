@@ -2,12 +2,20 @@ use crate::mediator;
 use crate::wrappers::*;
 use crate::Error;
 use crate::MakeTransport;
-use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
+use futures_core::{
+    future::Future,
+    ready,
+    stream::TryStream,
+    task::{Context, Poll},
+};
+use futures_sink::Sink;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
+use pin_project::pin_project;
 
 #[cfg(feature = "tracing")]
 use tracing::Level;
@@ -17,15 +25,19 @@ use tracing::Level;
 
 /// A transport capable of transporting tagged requests and responses must implement this
 /// interface in order to be used with a [`Client`].
+///
+/// Note that we require self to be pinned here as `assign_tag` and `finish_tag` are called on the
+/// transport, which is already pinned so that we can use it as a `Stream + Sink`. It wouldn't be
+/// safe to then give out `&mut` to the transport without `Pin`, as that might move the transport.
 pub trait TagStore<Request, Response> {
     /// The type used for tags.
     type Tag: Eq;
 
     /// Assign a fresh tag to the given `Request`, and return that tag.
-    fn assign_tag(&mut self, r: &mut Request) -> Self::Tag;
+    fn assign_tag(self: Pin<&mut Self>, r: &mut Request) -> Self::Tag;
 
     /// Retire and return the tag contained in the given `Response`.
-    fn finish_tag(&mut self, r: &Response) -> Self::Tag;
+    fn finish_tag(self: Pin<&mut Self>, r: &Response) -> Self::Tag;
 }
 
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
@@ -50,22 +62,6 @@ impl<NT, Request> Maker<NT, Request> {
     // require Fn + Clone)
 }
 
-impl<NT, Request> tower_load::Load for Maker<NT, Request> {
-    type Metric = u8;
-
-    fn load(&self) -> Self::Metric {
-        0
-    }
-}
-
-/// A `Future` that will resolve into a `Client<T::Transport>`.
-pub struct NewSpawnedClientFuture<NT, Target, Request>
-where
-    NT: MakeTransport<Target, Request>,
-{
-    maker: Option<NT::Future>,
-}
-
 /// A failure to spawn a new `Client`.
 #[derive(Debug)]
 pub enum SpawnError<E> {
@@ -74,33 +70,6 @@ pub enum SpawnError<E> {
 
     /// A new transport could not be produced.
     Inner(E),
-}
-
-impl<NT, Target, Request> Future for NewSpawnedClientFuture<NT, Target, Request>
-where
-    NT: MakeTransport<Target, Request>,
-    NT::Transport: 'static + Send + TagStore<Request, NT::Item>,
-    <NT::Transport as TagStore<Request, NT::Item>>::Tag: 'static + Send,
-    Request: 'static + Send,
-    NT::Item: 'static + Send,
-    NT::SinkError: 'static + Send + Sync,
-    NT::Error: 'static + Send + Sync,
-{
-    type Item = Client<NT::Transport, Error<NT::Transport>>;
-    type Error = SpawnError<NT::MakeError>;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.maker.take() {
-            None => unreachable!("poll called after future resolved"),
-            Some(mut fut) => match fut.poll().map_err(SpawnError::Inner)? {
-                Async::Ready(t) => Ok(Async::Ready(Client::new(t))),
-                Async::NotReady => {
-                    self.maker = Some(fut);
-                    Ok(Async::NotReady)
-                }
-            },
-        }
-    }
 }
 
 impl<NT, Target, Request> Service<Target> for Maker<NT, Request>
@@ -112,19 +81,27 @@ where
     NT::Item: 'static + Send,
     NT::SinkError: 'static + Send + Sync,
     NT::Error: 'static + Send + Sync,
+    NT::Future: 'static,
 {
     type Error = SpawnError<NT::MakeError>;
-    type Response = Client<NT::Transport, Error<NT::Transport>>;
-    type Future = NewSpawnedClientFuture<NT, Target, Request>;
+    type Response = Client<NT::Transport, Error<NT::Transport, Request>, Request>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     fn call(&mut self, target: Target) -> Self::Future {
-        NewSpawnedClientFuture {
-            maker: Some(self.t_maker.make_transport(target)),
-        }
+        let maker = self.t_maker.make_transport(target);
+        Box::pin(async move { Ok(Client::new(maker.await.map_err(SpawnError::Inner)?)) })
     }
 
-    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        self.t_maker.poll_ready().map_err(SpawnError::Inner)
+    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.t_maker.poll_ready(cx).map_err(SpawnError::Inner)
+    }
+}
+
+impl<NT, Request> tower_load::Load for Maker<NT, Request> {
+    type Metric = u8;
+
+    fn load(&self) -> Self::Metric {
+        0
     }
 }
 
@@ -133,11 +110,11 @@ where
 /// request-at-a-time protocol transport. In particular, it wraps a transport that implements
 /// `Sink<SinkItem = Request>` and `Stream<Item = Response>` with the necessary bookkeeping to
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
-pub struct Client<T, E>
+pub struct Client<T, E, Request>
 where
-    T: Sink + Stream,
+    T: Sink<Request> + TryStream,
 {
-    mediator: mediator::Sender<ClientRequest<T>>,
+    mediator: mediator::Sender<ClientRequest<T, Request>>,
     in_flight: Arc<atomic::AtomicUsize>,
     _error: PhantomData<fn(E)>,
 }
@@ -149,13 +126,14 @@ struct Pending<Tag, Item> {
     span: tracing::Span,
 }
 
-struct ClientInner<T, E>
+#[pin_project]
+struct ClientInner<T, E, Request>
 where
-    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
+    T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok>,
 {
-    mediator: mediator::Receiver<ClientRequest<T>>,
-    responses: VecDeque<Pending<T::Tag, T::Item>>,
-    waiting: Option<(T::Tag, ClientRequest<T>)>,
+    mediator: mediator::Receiver<ClientRequest<T, Request>>,
+    responses: VecDeque<Pending<T::Tag, T::Ok>>,
+    #[pin]
     transport: T,
 
     in_flight: Arc<atomic::AtomicUsize>,
@@ -165,13 +143,17 @@ where
     error: PhantomData<fn(E)>,
 }
 
-impl<T, E> Client<T, E>
+impl<T, E, Request> Client<T, E, Request>
 where
-    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item> + Send + 'static,
-    E: From<Error<T>>,
+    T: Sink<Request>
+        + TryStream
+        + TagStore<Request, <T as TryStream>::Ok>
+        + Send
+        + 'static,
+    E: From<Error<T, Request>>,
     E: 'static + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
+    Request: 'static + Send,
+    T::Ok: 'static + Send,
     T::Tag: Send,
 {
     /// Construct a new [`Client`] over the given `transport`.
@@ -191,18 +173,21 @@ where
     {
         let (tx, rx) = mediator::new();
         let in_flight = Arc::new(atomic::AtomicUsize::new(0));
-        tokio_executor::spawn(
-            ClientInner {
+        tokio_executor::spawn({
+            let c = ClientInner {
                 mediator: rx,
                 responses: Default::default(),
-                waiting: None,
                 transport,
                 in_flight: in_flight.clone(),
                 error: PhantomData::<fn(E)>,
                 finish: false,
+            };
+            async move {
+                if let Err(e) = c.await {
+                    on_service_error(e);
+                }
             }
-            .map_err(move |e| on_service_error(e)),
-        );
+        });
         Client {
             mediator: tx,
             in_flight,
@@ -211,124 +196,84 @@ where
     }
 }
 
-impl<T, E> Future for ClientInner<T, E>
+impl<T, E, Request> Future for ClientInner<T, E, Request>
 where
-    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
-    E: From<Error<T>>,
+    T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok>,
+    E: From<Error<T, Request>>,
     E: 'static + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
+    Request: 'static + Send,
+    T::Ok: 'static + Send,
 {
-    type Item = ();
-    type Error = E;
+    type Output = Result<(), E>;
 
-    fn poll(&mut self) -> Poll<Self::Item, E> {
-        // if Stream had a poll_ready, we could call that here to
-        // make sure there's room for at least one more request
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        // go through the deref so we can do partial borrows
+        let this = self.project();
 
-        if let Some((id, ClientRequest { req, span, res })) = self.waiting.take() {
-            #[cfg(feature = "tracing")]
-            let guard = span.enter();
-            #[cfg(feature = "tracing")]
-            tracing::event!(Level::TRACE, "retry sending request to Sink");
+        // we never move transport, nor do we ever hand out &mut to it
+        let mut transport: Pin<_> = this.transport;
 
-            if let AsyncSink::NotReady(req) = self
-                .transport
-                .start_send(req)
-                .map_err(Error::from_sink_error)?
-            {
-                #[cfg(feature = "tracing")]
-                {
-                    tracing::event!(Level::TRACE, "Sink still full; queueing");
-                    drop(guard);
-                }
-
-                #[cfg(not(feature = "tracing"))]
-                let span = ();
-                self.waiting = Some((id, ClientRequest { req, span, res }));
-            } else {
-                #[cfg(feature = "tracing")]
-                {
-                    tracing::event!(Level::TRACE, "request sent");
-                    drop(guard);
-                }
-
-                self.responses.push_back(Pending {
-                    tag: id,
-                    tx: res,
-                    #[cfg(feature = "tracing")]
-                    span,
-                });
-                self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
+        while let Poll::Ready(r) = transport.as_mut().poll_ready(cx) {
+            if let Err(e) = r {
+                return Poll::Ready(Err(E::from(Error::from_sink_error(e))));
             }
-        }
 
-        while self.waiting.is_none() {
             // send more requests if we have them
-            match self.mediator.try_recv() {
-                Async::Ready(Some(ClientRequest { mut req, span, res })) => {
-                    let id = self.transport.assign_tag(&mut req);
+            match this.mediator.try_recv(cx) {
+                Poll::Ready(Some(ClientRequest { mut req, span: _span, res })) => {
+                    let id = transport.as_mut().assign_tag(&mut req);
 
                     #[cfg(feature = "tracing")]
-                    let guard = span.enter();
+                    let guard = _span.enter();
                     #[cfg(feature = "tracing")]
                     tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
 
-                    if let AsyncSink::NotReady(req) = self
-                        .transport
+                    transport
+                        .as_mut()
                         .start_send(req)
-                        .map_err(Error::from_sink_error)?
-                    {
-                        assert!(self.waiting.is_none());
+                        .map_err(Error::from_sink_error)?;
+                    #[cfg(feature = "tracing")]
+                    tracing::event!(Level::TRACE, "request sent");
+                    #[cfg(feature = "tracing")]
+                    drop(guard);
+
+                    this.responses.push_back(Pending {
+                        tag: id,
+                        tx: res,
                         #[cfg(feature = "tracing")]
-                        {
-                            tracing::event!(Level::TRACE, "Sink full; queueing");
-                            drop(guard);
-                        }
-                        #[cfg(not(feature = "tracing"))]
-                        let span = ();
-                        self.waiting = Some((id, ClientRequest { req, span, res }));
-                    } else {
-                        #[cfg(feature = "tracing")]
-                        {
-                            tracing::event!(Level::TRACE, "request sent");
-                            drop(guard);
-                        }
-                        self.responses.push_back(Pending {
-                            tag: id,
-                            tx: res,
-                            #[cfg(feature = "tracing")]
-                            span,
-                        });
-                        self.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
-                    }
+                        span: _span,
+                    });
+                    this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
                 }
-                Async::Ready(None) => {
-                    self.finish = true;
+                Poll::Ready(None) => {
+                    // XXX: should we "give up" the Sink::poll_ready here?
+                    *this.finish = true;
                     break;
                 }
-                Async::NotReady => {
+                Poll::Pending => {
+                    // XXX: should we "give up" the Sink::poll_ready here?
                     break;
                 }
             }
         }
 
-        if self.in_flight.load(atomic::Ordering::Acquire) != 0 {
+        if this.in_flight.load(atomic::Ordering::Acquire) != 0 {
             // flush out any stuff we've sent in the past
             // don't return on NotReady since we have to check for responses too
-            if self.finish && self.waiting.is_none() {
+            if *this.finish {
                 // we're closing up shop!
                 //
-                // note that the check for requests.is_empty() is necessary, because
-                // Sink::close() requires that we never call start_send ever again!
-                //
-                // close() implies poll_complete()
+                // poll_close() implies poll_flush()
                 //
                 // FIXME: if close returns Ready, are we allowed to call close again?
-                self.transport.close().map_err(Error::from_sink_error)?;
+                let _ = transport
+                    .as_mut()
+                    .poll_close(cx)
+                    .map_err(Error::from_sink_error)?;
             } else {
-                self.transport
-                    .poll_complete()
+                let _ = transport
+                    .as_mut()
+                    .poll_flush(cx)
                     .map_err(Error::from_sink_error)?;
             }
         }
@@ -337,15 +282,18 @@ where
         //
         // note that we *could* have this just be a loop, but we don't want to poll the stream
         // if we know there's nothing for it to produce.
-        while self.in_flight.load(atomic::Ordering::Acquire) != 0 {
-            match try_ready!(self.transport.poll().map_err(Error::from_stream_error)) {
+        while this.in_flight.load(atomic::Ordering::Acquire) != 0 {
+            match ready!(transport.as_mut().try_poll_next(cx))
+                .transpose()
+                .map_err(Error::from_stream_error)?
+            {
                 Some(r) => {
                     // find the appropriate response channel.
                     // note that we do a _linear_ scan of the identifiers. this saves us from
                     // keeping a HashMap around, and is _usually_ fast as long as the requests
                     // that have been pending the longest are most likely to complete next.
-                    let id = self.transport.finish_tag(&r);
-                    let pending = self
+                    let id = transport.as_mut().finish_tag(&r);
+                    let pending = this
                         .responses
                         .iter()
                         .position(|&Pending { ref tag, .. }| tag == &id)
@@ -354,7 +302,7 @@ where
                     // this request just finished, which means it's _probably_ near the front
                     // (i.e., was issued a while ago). so, for the swap needed for efficient
                     // remove, we want to swap with something else that is close to the front.
-                    let pending = self.responses.swap_remove_front(pending).unwrap();
+                    let pending = this.responses.swap_remove_front(pending).unwrap();
                     event!(pending.span, Level::TRACE, "response arrived; forwarding");
 
                     // ignore send failures
@@ -365,23 +313,20 @@ where
                         #[cfg(feature = "tracing")]
                         span: pending.span,
                     });
-                    self.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
+                    this.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
                 }
                 None => {
                     // the transport terminated while we were waiting for a response!
                     // TODO: it'd be nice if we could return the transport here..
-                    return Err(E::from(Error::BrokenTransportRecv(None)));
+                    return Poll::Ready(Err(E::from(Error::BrokenTransportRecv(None))));
                 }
             }
         }
 
-        if self.finish
-            && self.waiting.is_none()
-            && self.in_flight.load(atomic::Ordering::Acquire) == 0
-        {
+        if *this.finish && this.in_flight.load(atomic::Ordering::Acquire) == 0 {
             // we're completely done once close() finishes!
-            try_ready!(self.transport.close().map_err(Error::from_sink_error));
-            return Ok(Async::Ready(()));
+            ready!(transport.poll_close(cx)).map_err(Error::from_sink_error)?;
+            return Poll::Ready(Ok(()));
         }
 
         // to get here, we must have no requests in flight and have gotten a NotReady from
@@ -389,29 +334,28 @@ where
         // waiting to be sent (transport.poll_complete), but if that's the case it must also have
         // returned NotReady. so, at this point, we know that all of our subtasks are either done
         // or have returned NotReady, so the right thing for us to do is return NotReady too!
-        Ok(Async::NotReady)
+        Poll::Pending
     }
 }
 
-impl<T, E> Service<T::SinkItem> for Client<T, E>
+impl<T, E, Request> Service<Request> for Client<T, E, Request>
 where
-    T: Sink + Stream + TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
-    E: From<Error<T>>,
+    T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok>,
+    E: From<Error<T, Request>>,
     E: 'static + Send,
-    T::SinkItem: 'static + Send,
-    T::Item: 'static + Send,
+    Request: 'static + Send,
+    T: 'static,
+    T::Ok: 'static + Send,
 {
-    type Response = T::Item;
+    type Response = T::Ok;
     type Error = E;
-    type Future = ClientResponseFut<T, E>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self) -> Result<Async<()>, E> {
-        self.mediator
-            .poll_ready()
-            .map_err(|_| E::from(Error::ClientDropped))
+    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), E>> {
+        Poll::Ready(ready!(self.mediator.poll_ready(cx)).map_err(|_| E::from(Error::ClientDropped)))
     }
 
-    fn call(&mut self, req: T::SinkItem) -> Self::Future {
+    fn call(&mut self, req: Request) -> Self::Future {
         let (tx, rx) = tokio_sync::oneshot::channel();
         #[cfg(feature = "tracing")]
         let span = tracing::Span::current();
@@ -419,19 +363,26 @@ where
         let span = ();
         event!(span, Level::TRACE, "issuing request");
         let req = ClientRequest { req, span, res: tx };
-        let fut = match self.mediator.try_send(req) {
-            Ok(AsyncSink::Ready) => ClientResponseFutInner::Pending(rx),
-            Ok(AsyncSink::NotReady(_)) | Err(_) => {
-                ClientResponseFutInner::Failed(Some(E::from(Error::TransportFull)))
+        let r = self.mediator.try_send(req);
+        Box::pin(async move {
+            match r {
+                Ok(()) => match rx.await {
+                    Ok(r) => {
+                        // TODO: provide a variant that lets you get at the span too
+                        event!(r.span, tracing::Level::TRACE, "response returned");
+                        Ok(r.response)
+                    }
+                    Err(_) => Err(E::from(Error::ClientDropped)),
+                },
+                Err(_) => Err(E::from(Error::TransportFull)),
             }
-        };
-        fut.into()
+        })
     }
 }
 
-impl<T, E> tower_load::Load for Client<T, E>
+impl<T, E, Request> tower_load::Load for Client<T, E, Request>
 where
-    T: Sink + Stream,
+    T: Sink<Request> + TryStream,
 {
     type Metric = usize;
 

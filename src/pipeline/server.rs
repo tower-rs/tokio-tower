@@ -1,5 +1,13 @@
-use futures::stream::FuturesOrdered;
-use futures::{Async, AsyncSink, Future, Sink, Stream};
+use futures_core::{
+    future::Future,
+    ready,
+    stream::TryStream,
+    task::{Context, Poll},
+};
+use futures_sink::Sink;
+use futures_util::stream::FuturesOrdered;
+use pin_project::pin_project;
+use std::pin::Pin;
 use std::{error, fmt};
 use tower_service::Service;
 
@@ -8,13 +16,15 @@ use tower_service::Service;
 /// request-at-a-time protocol transport. In particular, it wraps a transport that implements
 /// `Sink<SinkItem = Response>` and `Stream<Item = Request>` with the necessary bookkeeping to
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
+#[pin_project]
 pub struct Server<T, S>
 where
-    T: Sink + Stream,
-    S: Service<T::Item>,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
 {
-    waiting: Option<S::Response>,
+    #[pin]
     pending: FuturesOrdered<S::Future>,
+    #[pin]
     transport: T,
     service: S,
 
@@ -25,14 +35,14 @@ where
 /// An error that occurred while servicing a request.
 pub enum Error<T, S>
 where
-    T: Sink + Stream,
-    S: Service<T::Item>,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
 {
     /// The underlying transport failed to produce a request.
-    BrokenTransportRecv(T::Error),
+    BrokenTransportRecv(<T as TryStream>::Error),
 
     /// The underlying transport failed while attempting to send a response.
-    BrokenTransportSend(T::SinkError),
+    BrokenTransportSend(<T as Sink<S::Response>>::Error),
 
     /// The underlying service failed to process a request.
     Service(S::Error),
@@ -40,10 +50,10 @@ where
 
 impl<T, S> fmt::Display for Error<T, S>
 where
-    T: Sink + Stream,
-    T::SinkError: fmt::Display,
-    T::Error: fmt::Display,
-    S: Service<T::Item>,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
+    <T as Sink<S::Response>>::Error: fmt::Display,
+    <T as TryStream>::Error: fmt::Display,
     S::Error: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -57,10 +67,10 @@ where
 
 impl<T, S> fmt::Debug for Error<T, S>
 where
-    T: Sink + Stream,
-    T::SinkError: fmt::Debug,
-    T::Error: fmt::Debug,
-    S: Service<T::Item>,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
+    <T as Sink<S::Response>>::Error: fmt::Debug,
+    <T as TryStream>::Error: fmt::Debug,
     S::Error: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -74,10 +84,10 @@ where
 
 impl<T, S> error::Error for Error<T, S>
 where
-    T: Sink + Stream,
-    T::SinkError: error::Error,
-    T::Error: error::Error,
-    S: Service<T::Item>,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
+    <T as Sink<S::Response>>::Error: error::Error,
+    <T as TryStream>::Error: error::Error,
     S::Error: error::Error,
 {
     fn cause(&self) -> Option<&dyn error::Error> {
@@ -99,14 +109,14 @@ where
 
 impl<T, S> Error<T, S>
 where
-    T: Sink + Stream,
-    S: Service<T::Item>,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
 {
-    fn from_sink_error(e: T::SinkError) -> Self {
+    fn from_sink_error(e: <T as Sink<S::Response>>::Error) -> Self {
         Error::BrokenTransportSend(e)
     }
 
-    fn from_stream_error(e: T::Error) -> Self {
+    fn from_stream_error(e: <T as TryStream>::Error) -> Self {
         Error::BrokenTransportRecv(e)
     }
 
@@ -117,8 +127,8 @@ where
 
 impl<T, S> Server<T, S>
 where
-    T: Sink + Stream,
-    S: Service<T::Item>,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
 {
     /// Construct a new [`Server`] over the given `transport` that services requests using the
     /// given `service`.
@@ -129,7 +139,6 @@ where
     /// requests have been sent.
     pub fn new(transport: T, service: S) -> Self {
         Server {
-            waiting: None,
             pending: FuturesOrdered::new(),
             transport,
             service,
@@ -170,79 +179,80 @@ where
 
 impl<T, S> Future for Server<T, S>
 where
-    S: Service<<T as Stream>::Item>,
-    T: Sink<SinkItem = S::Response>,
-    T: Stream,
+    T: Sink<S::Response> + TryStream,
+    S: Service<<T as TryStream>::Ok>,
 {
-    type Item = ();
-    type Error = Error<T, S>;
+    type Output = Result<(), Error<T, S>>;
 
-    fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        // go through the deref so we can do partial borrows
+        let this = self.project();
+
+        // we never move transport or pending, nor do we ever hand out &mut to it
+        let mut transport: Pin<_> = this.transport;
+        let mut pending: Pin<_> = this.pending;
+
         loop {
-            // first, if we have a response ready to send, try to send it
-            if let Some(rsp) = self.waiting.take() {
-                if let AsyncSink::NotReady(rsp) = self
-                    .transport
-                    .start_send(rsp)
-                    .map_err(Error::from_sink_error)?
-                {
-                    self.waiting = Some(rsp);
-                } else {
-                    self.in_flight -= 1;
+            // first, poll pending futures to see if any have produced responses
+            // note that we only poll for completed service futures if we can send the response
+            while let Poll::Ready(r) = transport.as_mut().poll_ready(cx) {
+                if let Err(e) = r {
+                    return Poll::Ready(Err(Error::from_sink_error(e)));
                 }
-            }
 
-            // then, poll pending futures to see if any have produced responses
-            while self.waiting.is_none() {
-                match self.pending.poll().map_err(Error::from_service_error)? {
-                    Async::Ready(Some(rsp)) => {
-                        // try to send the response!
-                        if let AsyncSink::NotReady(rsp) = self
-                            .transport
-                            .start_send(rsp)
-                            .map_err(Error::from_sink_error)?
-                        {
-                            self.waiting = Some(rsp);
-                        } else {
-                            self.in_flight -= 1;
-                        }
+                match pending.as_mut().try_poll_next(cx) {
+                    Poll::Ready(Some(Err(e))) => {
+                        return Poll::Ready(Err(Error::from_service_error(e)));
                     }
-                    _ => break,
+                    Poll::Ready(Some(Ok(rsp))) => {
+                        // try to send the response!
+                        transport
+                            .as_mut()
+                            .start_send(rsp)
+                            .map_err(Error::from_sink_error)?;
+                        *this.in_flight -= 1;
+                    }
+                    _ => {
+                        // XXX: should we "release" the poll_ready we got from the Sink?
+                        break;
+                    }
                 }
             }
 
             // also try to make progress on sending
-            if let Async::Ready(()) = self
-                .transport
-                .poll_complete()
+            if let Poll::Ready(()) = transport
+                .as_mut()
+                .poll_flush(cx)
                 .map_err(Error::from_sink_error)?
             {
-                if self.finish && self.waiting.is_none() && self.pending.is_empty() {
+                if *this.finish && pending.as_mut().is_empty() {
                     // there are no more requests
                     // and we've finished all the work!
-                    return Ok(Async::Ready(()));
+                    return Poll::Ready(Ok(()));
                 }
             }
 
-            if self.finish {
+            if *this.finish {
                 // there's still work to be done, but there are no more requests
                 // so no need to check the incoming transport
-                return Ok(Async::NotReady);
+                return Poll::Pending;
             }
 
             // is the service ready?
-            try_ready!(self.service.poll_ready().map_err(Error::from_service_error));
+            ready!(this.service.poll_ready(cx)).map_err(Error::from_service_error)?;
 
-            let rq = try_ready!(self.transport.poll().map_err(Error::from_stream_error));
+            let rq = ready!(transport.as_mut().try_poll_next(cx))
+                .transpose()
+                .map_err(Error::from_stream_error)?;
             if let Some(rq) = rq {
                 // the service is ready, and we have another request!
                 // you know what that means:
-                self.pending.push(self.service.call(rq));
-                self.in_flight += 1;
+                pending.push(this.service.call(rq));
+                *this.in_flight += 1;
             } else {
                 // there are no more requests coming -- shut down
-                assert!(!self.finish);
-                self.finish = true;
+                assert!(!*this.finish);
+                *this.finish = true;
             }
         }
     }

@@ -9,7 +9,12 @@
 //! Note: multiplexing with the max number of in-flight requests set to 1 implies that for each
 //! request, the response must be received before sending another request on the same connection.
 
-use futures::{Async, AsyncSink, Sink, Stream};
+use futures_core::{
+    stream::{Stream, TryStream},
+    task::{Context, Poll},
+};
+use futures_sink::Sink;
+use std::pin::Pin;
 
 /// Client bindings for a multiplexed protocol.
 pub mod client;
@@ -26,6 +31,8 @@ pub struct MultiplexTransport<T, S> {
     tagger: S,
 }
 
+// NOTE: we don't ever move transport or tagger, so it's safe to use map_unchecked_mut below
+
 impl<T, S> MultiplexTransport<T, S> {
     /// Fuse together the given `transport` and `tagger` into a single `Transport`.
     pub fn new(transport: T, tagger: S) -> Self {
@@ -33,45 +40,46 @@ impl<T, S> MultiplexTransport<T, S> {
     }
 }
 
-impl<T, S> Sink for MultiplexTransport<T, S>
+impl<T, S, Request> Sink<Request> for MultiplexTransport<T, S>
 where
-    T: Sink,
+    T: Sink<Request>,
 {
-    type SinkItem = <T as Sink>::SinkItem;
-    type SinkError = <T as Sink>::SinkError;
-    fn start_send(
-        &mut self,
-        item: Self::SinkItem,
-    ) -> Result<AsyncSink<Self::SinkItem>, Self::SinkError> {
-        self.transport.start_send(item)
-    }
+    type Error = <T as Sink<Request>>::Error;
 
-    fn poll_complete(&mut self) -> Result<Async<()>, Self::SinkError> {
-        self.transport.poll_complete()
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.poll_ready(cx)
+    }
+    fn start_send(self: Pin<&mut Self>, item: Request) -> Result<(), Self::Error> {
+        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.start_send(item)
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.poll_flush(cx)
+    }
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.poll_close(cx)
     }
 }
 
 impl<T, S> Stream for MultiplexTransport<T, S>
 where
-    T: Stream,
+    T: TryStream,
 {
-    type Item = <T as Stream>::Item;
-    type Error = <T as Stream>::Error;
-    fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        self.transport.poll()
+    type Item = Result<<T as TryStream>::Ok, <T as TryStream>::Error>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.try_poll_next(cx)
     }
 }
 
-impl<T, S> TagStore<<T as Sink>::SinkItem, <T as Stream>::Item> for MultiplexTransport<T, S>
+impl<T, S, Request> TagStore<Request, <T as TryStream>::Ok> for MultiplexTransport<T, S>
 where
-    T: Sink + Stream,
-    S: TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>,
+    T: Sink<Request> + TryStream,
+    S: TagStore<Request, <T as TryStream>::Ok>,
 {
-    type Tag = <S as TagStore<<T as Sink>::SinkItem, <T as Stream>::Item>>::Tag;
-    fn assign_tag(&mut self, req: &mut <T as Sink>::SinkItem) -> Self::Tag {
-        self.tagger.assign_tag(req)
+    type Tag = <S as TagStore<Request, <T as TryStream>::Ok>>::Tag;
+    fn assign_tag(self: Pin<&mut Self>, req: &mut Request) -> Self::Tag {
+        unsafe { self.map_unchecked_mut(|t| &mut t.tagger) }.assign_tag(req)
     }
-    fn finish_tag(&mut self, rsp: &<T as Stream>::Item) -> Self::Tag {
-        self.tagger.finish_tag(rsp)
+    fn finish_tag(self: Pin<&mut Self>, rsp: &<T as TryStream>::Ok) -> Self::Tag {
+        unsafe { self.map_unchecked_mut(|t| &mut t.tagger) }.finish_tag(rsp)
     }
 }

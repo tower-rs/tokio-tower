@@ -1,16 +1,16 @@
-use crate::Error;
-use futures::{Async, Future, Poll, Sink, Stream};
+use futures_core::stream::TryStream;
+use futures_sink::Sink;
 
-pub(crate) struct ClientRequest<T>
+pub(crate) struct ClientRequest<T, I>
 where
-    T: Sink + Stream,
+    T: Sink<I> + TryStream,
 {
-    pub(crate) req: T::SinkItem,
+    pub(crate) req: I,
     #[cfg(not(feature = "tracing"))]
     pub(crate) span: (),
     #[cfg(feature = "tracing")]
     pub(crate) span: tracing::Span,
-    pub(crate) res: tokio_sync::oneshot::Sender<ClientResponse<T::Item>>,
+    pub(crate) res: tokio_sync::oneshot::Sender<ClientResponse<T::Ok>>,
 }
 
 pub(crate) struct ClientResponse<T> {
@@ -19,6 +19,7 @@ pub(crate) struct ClientResponse<T> {
     pub(crate) span: tracing::Span,
 }
 
+/*
 pub(crate) enum ClientResponseFutInner<T, E>
 where
     T: Stream,
@@ -113,3 +114,4 @@ where
         Ok(Async::Ready((response, span)))
     }
 }
+*/
