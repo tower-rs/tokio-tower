@@ -30,7 +30,7 @@ tokio-executor = "=0.2.0-alpha.4"
 tokio-sync = "=0.2.0-alpha.4"
 crossbeam = "0.7"
 tracing = { version = "0.1.2", optional = true }
-pin-project = "0.4.0-alpha.7"
+pin-project = "0.4.0-alpha.9"
 
 [dev-dependencies]
 tokio = "=0.2.0-alpha.4"

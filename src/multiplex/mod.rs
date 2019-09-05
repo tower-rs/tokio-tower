@@ -14,6 +14,7 @@ use futures_core::{
     task::{Context, Poll},
 };
 use futures_sink::Sink;
+use pin_project::pin_project;
 use std::pin::Pin;
 
 /// Client bindings for a multiplexed protocol.
@@ -26,12 +27,13 @@ pub use self::server::Server;
 
 /// A convenience wrapper that lets you take separate transport and tag store types and use them as
 /// a single [`client::Transport`].
+#[pin_project]
 pub struct MultiplexTransport<T, S> {
+    #[pin]
     transport: T,
+    #[pin]
     tagger: S,
 }
-
-// NOTE: we don't ever move transport or tagger, so it's safe to use map_unchecked_mut below
 
 impl<T, S> MultiplexTransport<T, S> {
     /// Fuse together the given `transport` and `tagger` into a single `Transport`.
@@ -46,17 +48,17 @@ where
 {
     type Error = <T as Sink<Request>>::Error;
 
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.poll_ready(cx)
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.project().transport.poll_ready(cx)
     }
-    fn start_send(self: Pin<&mut Self>, item: Request) -> Result<(), Self::Error> {
-        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.start_send(item)
+    fn start_send(mut self: Pin<&mut Self>, item: Request) -> Result<(), Self::Error> {
+        self.project().transport.start_send(item)
     }
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.poll_flush(cx)
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.project().transport.poll_flush(cx)
     }
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.poll_close(cx)
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.project().transport.poll_close(cx)
     }
 }
 
@@ -65,8 +67,8 @@ where
     T: TryStream,
 {
     type Item = Result<<T as TryStream>::Ok, <T as TryStream>::Error>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        unsafe { self.map_unchecked_mut(|t| &mut t.transport) }.try_poll_next(cx)
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.project().transport.try_poll_next(cx)
     }
 }
 
@@ -76,10 +78,10 @@ where
     S: TagStore<Request, <T as TryStream>::Ok>,
 {
     type Tag = <S as TagStore<Request, <T as TryStream>::Ok>>::Tag;
-    fn assign_tag(self: Pin<&mut Self>, req: &mut Request) -> Self::Tag {
-        unsafe { self.map_unchecked_mut(|t| &mut t.tagger) }.assign_tag(req)
+    fn assign_tag(mut self: Pin<&mut Self>, req: &mut Request) -> Self::Tag {
+        self.project().tagger.assign_tag(req)
     }
-    fn finish_tag(self: Pin<&mut Self>, rsp: &<T as TryStream>::Ok) -> Self::Tag {
-        unsafe { self.map_unchecked_mut(|t| &mut t.tagger) }.finish_tag(rsp)
+    fn finish_tag(mut self: Pin<&mut Self>, rsp: &<T as TryStream>::Ok) -> Self::Tag {
+        self.project().tagger.finish_tag(rsp)
     }
 }
