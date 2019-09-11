@@ -22,7 +22,7 @@ default = ["tracing"]
 
 [dependencies]
 tower-service = "=0.3.0-alpha.1"
-tower-load = { git = "https://github.com/tower-rs/tower.git" }
+tower-load = { git = "https://github.com/tower-rs/tower.git", branch = "v0.3.x" }
 futures-util-preview = "=0.3.0-alpha.18"
 futures-core-preview = "=0.3.0-alpha.18"
 futures-sink-preview = "=0.3.0-alpha.18"
