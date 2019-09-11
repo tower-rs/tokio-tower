@@ -22,7 +22,7 @@ default = ["tracing"]
 
 [dependencies]
 tower-service = "=0.3.0-alpha.1"
-tower-load = { git = "https://github.com/tower-rs/tower.git", branch = "v0.3.x" }
+tower-load = "=0.3.0-alpha.1"
 futures-util-preview = "=0.3.0-alpha.18"
 futures-core-preview = "=0.3.0-alpha.18"
 futures-sink-preview = "=0.3.0-alpha.18"
@@ -30,12 +30,12 @@ tokio-executor = "=0.2.0-alpha.4"
 tokio-sync = "=0.2.0-alpha.4"
 crossbeam = "0.7"
 tracing = { version = "0.1.2", optional = true }
-pin-project = "0.4.0-alpha.9"
+pin-project = "0.4.0-alpha.11"
 
 [dev-dependencies]
 tokio = "=0.2.0-alpha.4"
 serde = "1.0"
 serde_derive = "1.0"
-async-bincode = { git = "https://github.com/jonhoo/async-bincode", branch = "async" }
+async-bincode = "0.5.0-alpha.2"
 slab = "0.4"
 tokio-test = "=0.2.0-alpha.4"
