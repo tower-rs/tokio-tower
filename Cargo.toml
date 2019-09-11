@@ -2,14 +2,11 @@
 name = "tokio-tower"
 version = "0.2.0-alpha.1"
 edition = "2018"
-
-description = "Bridging the protocol gap between Tokio and Tower"
-readme = "README.md"
-
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
-homepage = "https://github.com/jonhoo/tokio-tower"
-repository = "https://github.com/jonhoo/tokio-tower.git"
+readme = "README.md"
+description = "Bridging the protocol gap between Tokio and Tower"
+repository = "https://github.com/tower-rs/tokio-tower.git"
 
 keywords = ["tokio", "tower", "asynchronous", "protocol", "transport"]
 categories = ["asynchronous", "network-programming"]
