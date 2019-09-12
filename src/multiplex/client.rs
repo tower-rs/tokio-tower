@@ -9,13 +9,13 @@ use futures_core::{
     task::{Context, Poll},
 };
 use futures_sink::Sink;
+use pin_project::pin_project;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
-use pin_project::pin_project;
 
 #[cfg(feature = "tracing")]
 use tracing::Level;
@@ -145,11 +145,7 @@ where
 
 impl<T, E, Request> Client<T, E, Request>
 where
-    T: Sink<Request>
-        + TryStream
-        + TagStore<Request, <T as TryStream>::Ok>
-        + Send
-        + 'static,
+    T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok> + Send + 'static,
     E: From<Error<T, Request>>,
     E: 'static + Send,
     Request: 'static + Send,
@@ -220,7 +216,11 @@ where
 
             // send more requests if we have them
             match this.mediator.try_recv(cx) {
-                Poll::Ready(Some(ClientRequest { mut req, span: _span, res })) => {
+                Poll::Ready(Some(ClientRequest {
+                    mut req,
+                    span: _span,
+                    res,
+                })) => {
                     let id = transport.as_mut().assign_tag(&mut req);
 
                     #[cfg(feature = "tracing")]

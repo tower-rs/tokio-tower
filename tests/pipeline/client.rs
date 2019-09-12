@@ -1,13 +1,15 @@
-use crate::{unwrap, ready, PanicError, Request, Response};
+use crate::{ready, unwrap, PanicError, Request, Response};
 use async_bincode::*;
+use futures_util::{sink::SinkExt, stream::StreamExt};
 use tokio;
 use tokio_tower::pipeline::Client;
 use tower_service::Service;
-use futures_util::{sink::SinkExt, stream::StreamExt};
 
 #[tokio::test]
 async fn it_works() {
-    let mut rx = tokio::net::tcp::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut rx = tokio::net::tcp::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
@@ -21,14 +23,12 @@ async fn it_works() {
             let (r, w) = stream.split();
             let mut r: AsyncBincodeReader<_, Request> = AsyncBincodeReader::from(r);
             let mut w: AsyncBincodeWriter<_, Response, _> = AsyncBincodeWriter::from(w).for_async();
-            tokio::spawn(
-                async move {
-                    loop {
-                        let req = r.next().await.unwrap().unwrap();
-                        w.send(Response::from(req)).await.unwrap();
-                    }
+            tokio::spawn(async move {
+                loop {
+                    let req = r.next().await.unwrap().unwrap();
+                    w.send(Response::from(req)).await.unwrap();
                 }
-            );
+            });
         }
     });
 

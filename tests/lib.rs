@@ -1,8 +1,8 @@
 #[macro_use]
 extern crate serde_derive;
 
-use std::task::{Poll, Context};
 use futures_util::future::poll_fn;
+use std::task::{Context, Poll};
 use tower_service::Service;
 
 async fn ready<S: Service<Request>, Request>(svc: &mut S) -> Result<(), S::Error> {
