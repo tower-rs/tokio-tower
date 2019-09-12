@@ -9,13 +9,13 @@ use futures_core::{
     task::{Context, Poll},
 };
 use futures_sink::Sink;
+use pin_project::pin_project;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
-use pin_project::pin_project;
 
 #[cfg(feature = "tracing")]
 use tracing::Level;
@@ -193,7 +193,11 @@ where
 
             // send more requests if we have them
             match this.mediator.try_recv(cx) {
-                Poll::Ready(Some(ClientRequest { req, span: _span, res })) => {
+                Poll::Ready(Some(ClientRequest {
+                    req,
+                    span: _span,
+                    res,
+                })) => {
                     #[cfg(feature = "tracing")]
                     let guard = _span.enter();
                     #[cfg(feature = "tracing")]

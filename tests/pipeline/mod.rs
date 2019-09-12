@@ -8,7 +8,9 @@ mod client;
 
 #[tokio::test]
 async fn integration() {
-    let mut rx = tokio::net::tcp::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut rx = tokio::net::tcp::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
@@ -21,9 +23,7 @@ async fn integration() {
     let rx = AsyncBincodeStream::from(rx).for_async();
     let server = Server::new(rx, EchoService);
 
-    tokio::spawn(async move {
-        server.await.unwrap()
-    });
+    tokio::spawn(async move { server.await.unwrap() });
 
     unwrap(ready(&mut tx).await);
     let fut1 = tx.call(Request::new(1));
