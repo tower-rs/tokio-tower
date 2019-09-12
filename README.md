@@ -1,9 +1,6 @@
 [![Crates.io](https://img.shields.io/crates/v/tokio-tower.svg)](https://crates.io/crates/tokio-tower)
 [![Documentation](https://docs.rs/tokio-tower/badge.svg)](https://docs.rs/tokio-tower/)
 [![Build Status](https://dev.azure.com/tower-rs/tokio-tower/_apis/build/status/tokio-tower?branchName=master)](https://dev.azure.com/tower-rs/tokio-tower/_build/latest?definitionId=4&branchName=master)
-<!--
-[![Codecov](https://codecov.io/github/tower-rs/tokio-tower/coverage.svg?branch=master)](https://codecov.io/gh/tower-rs/tokio-tower)
--->
 [![Dependency status](https://deps.rs/repo/github/tower-rs/tokio-tower/status.svg)](https://deps.rs/repo/github/tower-rs/tokio-tower)
 
 
