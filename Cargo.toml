@@ -13,6 +13,9 @@ categories = ["asynchronous", "network-programming"]
 
 license = "MIT"
 
+[badges]
+azure-devops = { project = "tower-rs/tokio-tower", pipeline = "tokio-tower", build = "4" }
+
 [features]
 log = ["tracing/log"]
 default = ["tracing"]
