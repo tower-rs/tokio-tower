@@ -48,16 +48,16 @@ where
 {
     type Error = <T as Sink<Request>>::Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         self.project().transport.poll_ready(cx)
     }
-    fn start_send(mut self: Pin<&mut Self>, item: Request) -> Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: Request) -> Result<(), Self::Error> {
         self.project().transport.start_send(item)
     }
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         self.project().transport.poll_flush(cx)
     }
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         self.project().transport.poll_close(cx)
     }
 }
@@ -67,7 +67,7 @@ where
     T: TryStream,
 {
     type Item = Result<<T as TryStream>::Ok, <T as TryStream>::Error>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         self.project().transport.try_poll_next(cx)
     }
 }
@@ -78,10 +78,10 @@ where
     S: TagStore<Request, <T as TryStream>::Ok>,
 {
     type Tag = <S as TagStore<Request, <T as TryStream>::Ok>>::Tag;
-    fn assign_tag(mut self: Pin<&mut Self>, req: &mut Request) -> Self::Tag {
+    fn assign_tag(self: Pin<&mut Self>, req: &mut Request) -> Self::Tag {
         self.project().tagger.assign_tag(req)
     }
-    fn finish_tag(mut self: Pin<&mut Self>, rsp: &<T as TryStream>::Ok) -> Self::Tag {
+    fn finish_tag(self: Pin<&mut Self>, rsp: &<T as TryStream>::Ok) -> Self::Tag {
         self.project().tagger.finish_tag(rsp)
     }
 }

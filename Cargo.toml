@@ -1,6 +1,6 @@
 [package]
 name = "tokio-tower"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 edition = "2018"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
@@ -26,16 +26,30 @@ tower-load = "=0.3.0-alpha.1"
 futures-util-preview = "=0.3.0-alpha.18"
 futures-core-preview = "=0.3.0-alpha.18"
 futures-sink-preview = "=0.3.0-alpha.18"
-tokio-executor = "=0.2.0-alpha.4"
-tokio-sync = "=0.2.0-alpha.4"
+tokio-executor = "=0.2.0-alpha.5"
+tokio-sync = "=0.2.0-alpha.5"
 crossbeam = "0.7"
 tracing = { version = "0.1.2", optional = true }
-pin-project = "0.4.0-alpha.11"
+pin-project = "0.4.0"
 
 [dev-dependencies]
-tokio = "=0.2.0-alpha.4"
+tokio = "=0.2.0-alpha.5"
 serde = "1.0"
 serde_derive = "1.0"
-async-bincode = "0.5.0-alpha.2"
+async-bincode = "=0.5.0-alpha.5"
 slab = "0.4"
-tokio-test = "=0.2.0-alpha.4"
+tokio-test = "=0.2.0-alpha.5"
+
+[patch.crates-io]
+tokio = { git = "https://github.com/tokio-rs/tokio" }
+tokio-codec = { git = "https://github.com/tokio-rs/tokio" }
+tokio-executor = { git = "https://github.com/tokio-rs/tokio" }
+tokio-fs = { git = "https://github.com/tokio-rs/tokio" }
+tokio-io = { git = "https://github.com/tokio-rs/tokio" }
+tokio-macros = { git = "https://github.com/tokio-rs/tokio" }
+tokio-net = { git = "https://github.com/tokio-rs/tokio" }
+tokio-sync = { git = "https://github.com/tokio-rs/tokio" }
+tokio-timer = { git = "https://github.com/tokio-rs/tokio" }
+tower-discover = { git = "https://github.com/taiki-e/tower.git", branch = "pin-project" }
+tower-service = { git = "https://github.com/taiki-e/tower.git", branch = "pin-project" }
+tower-load = { git = "https://github.com/taiki-e/tower.git", branch = "pin-project" }
