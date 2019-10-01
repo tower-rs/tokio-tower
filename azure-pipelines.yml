@@ -6,7 +6,7 @@ stages:
      - template: azure/cargo-check.yml@templates
        parameters:
          name: cargo_check
-         rust: nightly
+         rust: beta
  - stage: test
    displayName: Test suite
    dependsOn: check
@@ -14,7 +14,11 @@ stages:
      - template: azure/test.yml@templates
        parameters:
          cross: true
+         rust: beta
+     - template: azure/test.yml@templates
+       parameters:
          rust: nightly
+         allow_fail: true
  - stage: style
    displayName: Style linting
    dependsOn: check
@@ -22,12 +26,12 @@ stages:
      - template: azure/rustfmt.yml@templates
        parameters:
          name: rustfmt
-         rust: nightly
+         rust: beta
          allow_fail: true
      - template: azure/cargo-clippy.yml@templates
        parameters:
          name: clippy
-         rust: nightly
+         rust: beta
          allow_fail: true
 
 resources:
