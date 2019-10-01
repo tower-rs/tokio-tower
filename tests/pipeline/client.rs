@@ -19,11 +19,12 @@ async fn it_works() {
 
     tokio::spawn(async move {
         loop {
-            let (stream, _) = rx.accept().await.unwrap();
-            let (r, w) = stream.split();
-            let mut r: AsyncBincodeReader<_, Request> = AsyncBincodeReader::from(r);
-            let mut w: AsyncBincodeWriter<_, Response, _> = AsyncBincodeWriter::from(w).for_async();
+            let (mut stream, _) = rx.accept().await.unwrap();
             tokio::spawn(async move {
+                let (r, w) = stream.split();
+                let mut r: AsyncBincodeReader<_, Request> = AsyncBincodeReader::from(r);
+                let mut w: AsyncBincodeWriter<_, Response, _> =
+                    AsyncBincodeWriter::from(w).for_async();
                 loop {
                     let req = r.next().await.unwrap().unwrap();
                     w.send(Response::from(req)).await.unwrap();

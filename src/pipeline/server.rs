@@ -184,7 +184,7 @@ where
 {
     type Output = Result<(), Error<T, S>>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         // go through the deref so we can do partial borrows
         let this = self.project();
 
