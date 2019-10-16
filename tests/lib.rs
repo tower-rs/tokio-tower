@@ -19,6 +19,10 @@ impl Request {
     pub fn new(val: u32) -> Self {
         Request { tag: 0, value: val }
     }
+
+    pub fn check(&self, expected: u32) {
+        assert_eq!(self.value, expected);
+    }
 }
 
 #[derive(Serialize, Deserialize)]

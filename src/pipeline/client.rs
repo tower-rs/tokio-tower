@@ -116,6 +116,7 @@ where
 
     in_flight: Arc<atomic::AtomicUsize>,
     finish: bool,
+    rx_only: bool,
 
     #[allow(unused)]
     error: PhantomData<fn(E)>,
@@ -154,6 +155,7 @@ where
                 in_flight: in_flight.clone(),
                 error: PhantomData::<fn(E)>,
                 finish: false,
+                rx_only: false,
             };
             async move {
                 if let Err(e) = c.await {
@@ -231,19 +233,21 @@ where
             }
         }
 
-        if this.in_flight.load(atomic::Ordering::Acquire) != 0 {
+        if this.in_flight.load(atomic::Ordering::Acquire) != 0 && !*this.rx_only {
             // flush out any stuff we've sent in the past
             // don't return on NotReady since we have to check for responses too
             if *this.finish {
                 // we're closing up shop!
                 //
                 // poll_close() implies poll_flush()
-                //
-                // FIXME: if close returns Ready, are we allowed to call close again?
                 let _ = transport
                     .as_mut()
                     .poll_close(cx)
                     .map_err(Error::from_sink_error)?;
+
+                // now that close has completed, we should never send anything again
+                // we only need to receive to make the in-flight requests complete
+                *this.rx_only = true;
             } else {
                 let _ = transport
                     .as_mut()
@@ -287,8 +291,12 @@ where
         }
 
         if *this.finish && this.in_flight.load(atomic::Ordering::Acquire) == 0 {
+            if *this.rx_only {
+                // we have already closed the send side.
+            } else {
             // we're completely done once close() finishes!
             ready!(transport.poll_close(cx)).map_err(Error::from_sink_error)?;
+            }
             return Poll::Ready(Ok(()));
         }
 
