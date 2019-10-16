@@ -1,12 +1,12 @@
 use crate::{ready, unwrap, EchoService, PanicError, Request, Response};
 use async_bincode::*;
+use futures_util::pin_mut;
 use slab::Slab;
 use std::pin::Pin;
 use tokio;
 use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
 use tower_service::Service;
-use tower_test::{mock};
-use futures_util::pin_mut;
+use tower_test::mock;
 
 pub(crate) struct SlabStore(Slab<()>);
 

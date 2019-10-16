@@ -294,8 +294,8 @@ where
             if *this.rx_only {
                 // we have already closed the send side.
             } else {
-            // we're completely done once close() finishes!
-            ready!(transport.poll_close(cx)).map_err(Error::from_sink_error)?;
+                // we're completely done once close() finishes!
+                ready!(transport.poll_close(cx)).map_err(Error::from_sink_error)?;
             }
             return Poll::Ready(Ok(()));
         }

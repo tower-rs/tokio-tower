@@ -1,10 +1,10 @@
 use crate::{ready, unwrap, EchoService, PanicError, Request, Response};
 use async_bincode::*;
+use futures_util::pin_mut;
 use tokio;
 use tokio_tower::pipeline::{Client, Server};
 use tower_service::Service;
-use tower_test::{mock};
-use futures_util::pin_mut;
+use tower_test::mock;
 
 mod client;
 
