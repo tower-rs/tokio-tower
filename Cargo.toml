@@ -39,3 +39,7 @@ async-bincode = "0.5"
 slab = "0.4"
 tokio-test = "0.2"
 tower-test = "0.3"
+
+[patch.crates-io]
+tower-load = { git = "https://github.com/tower-rs/tower.git" }
+tower-test = { git = "https://github.com/tower-rs/tower.git" }
