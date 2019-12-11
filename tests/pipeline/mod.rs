@@ -1,4 +1,5 @@
 use crate::{ready, unwrap, EchoService, PanicError, Request, Response};
+use tokio::net::{TcpListener, TcpStream};
 use async_bincode::*;
 use futures_util::pin_mut;
 use tokio;
@@ -10,13 +11,13 @@ mod client;
 
 #[tokio::test]
 async fn integration() {
-    let mut rx = tokio::net::tcp::TcpListener::bind("127.0.0.1:0")
+    let mut rx = TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
-    let tx = tokio::net::tcp::TcpStream::connect(&addr).await.unwrap();
+    let tx = TcpStream::connect(&addr).await.unwrap();
     let tx: AsyncBincodeStream<_, Response, _, _> = AsyncBincodeStream::from(tx).for_async();
     let mut tx: Client<_, PanicError, _> = Client::new(tx);
 
@@ -40,13 +41,13 @@ async fn integration() {
 
 #[tokio::test]
 async fn racing_close() {
-    let mut rx = tokio::net::tcp::TcpListener::bind("127.0.0.1:0")
+    let mut rx = TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
-    let tx = tokio::net::tcp::TcpStream::connect(&addr).await.unwrap();
+    let tx = TcpStream::connect(&addr).await.unwrap();
     let tx: AsyncBincodeStream<_, Response, _, _> = AsyncBincodeStream::from(tx).for_async();
     let mut tx: Client<_, PanicError, _> = Client::new(tx);
 
@@ -75,11 +76,11 @@ async fn racing_close() {
     // respond to both requests one after the other
     // the response to the first should trigger the state machine to handle
     // a read after it has poll_closed on the transport.
-    let (req1, rsp1) = handle.as_mut().next_request().unwrap();
+    let (req1, rsp1) = handle.as_mut().next_request().await.unwrap();
     req1.check(1);
     rsp1.send_response(Response::from(req1));
     unwrap(fut1.await).check(1);
-    let (req2, rsp2) = handle.as_mut().next_request().unwrap();
+    let (req2, rsp2) = handle.as_mut().next_request().await.unwrap();
     req2.check(2);
     rsp2.send_response(Response::from(req2));
     unwrap(fut2.await).check(2);

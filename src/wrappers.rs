@@ -10,7 +10,7 @@ where
     pub(crate) span: (),
     #[cfg(feature = "tracing")]
     pub(crate) span: tracing::Span,
-    pub(crate) res: tokio_sync::oneshot::Sender<ClientResponse<T::Ok>>,
+    pub(crate) res: tokio::sync::oneshot::Sender<ClientResponse<T::Ok>>,
 }
 
 pub(crate) struct ClientResponse<T> {

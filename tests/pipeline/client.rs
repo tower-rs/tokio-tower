@@ -1,4 +1,5 @@
 use crate::{ready, unwrap, PanicError, Request, Response};
+use tokio::net::{TcpListener, TcpStream};
 use async_bincode::*;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use tokio;
@@ -7,13 +8,13 @@ use tower_service::Service;
 
 #[tokio::test]
 async fn it_works() {
-    let mut rx = tokio::net::tcp::TcpListener::bind("127.0.0.1:0")
+    let mut rx = TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
-    let tx = tokio::net::tcp::TcpStream::connect(&addr).await.unwrap();
+    let tx = TcpStream::connect(&addr).await.unwrap();
     let tx: AsyncBincodeStream<_, Response, _, _> = AsyncBincodeStream::from(tx).for_async();
     let mut tx: Client<_, PanicError, _> = Client::new(tx);
 
