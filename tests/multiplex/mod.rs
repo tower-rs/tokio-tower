@@ -1,10 +1,10 @@
 use crate::{ready, unwrap, EchoService, PanicError, Request, Response};
-use tokio::net::{TcpListener, TcpStream};
 use async_bincode::*;
 use futures_util::pin_mut;
 use slab::Slab;
 use std::pin::Pin;
 use tokio;
+use tokio::net::{TcpListener, TcpStream};
 use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
 use tower_service::Service;
 use tower_test::mock;
@@ -27,9 +27,7 @@ impl TagStore<Request, Response> for SlabStore {
 
 #[tokio::test]
 async fn integration() {
-    let mut rx = TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let mut rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
@@ -58,9 +56,7 @@ async fn integration() {
 
 #[tokio::test]
 async fn racing_close() {
-    let mut rx = TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let mut rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
