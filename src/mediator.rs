@@ -177,58 +177,91 @@ impl<T> Drop for Receiver<T> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use tokio_test::task::MockTask;
 
     #[test]
     fn basic() {
-        let mut mt = MockTask::new();
+        let (tx, rx) = new::<usize>();
+        let mut tx = tokio_test::task::spawn(tx);
+        let mut rx = tokio_test::task::spawn(rx);
 
-        let (mut tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
-        assert!(!mt.is_woken());
-        assert_eq!(mt.enter(|_| tx.try_send(42)), Ok(()));
-        assert!(!mt.is_woken());
-        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(Some(42)));
-
-        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
-        assert_eq!(mt.enter(|_| tx.try_send(43)), Ok(()));
-        assert!(mt.is_woken());
-        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Pending);
         assert_eq!(
-            mt.enter(|_| tx.try_send(44)),
+            tx.enter(|cx, mut tx| tx.poll_ready(cx)),
+            Poll::Ready(Ok(()))
+        );
+        assert!(!tx.is_woken());
+        assert!(!rx.is_woken());
+        assert_eq!(tx.enter(|_, mut tx| tx.try_send(42)), Ok(()));
+        assert!(!tx.is_woken());
+        assert!(!rx.is_woken());
+        assert_eq!(
+            rx.enter(|cx, mut rx| rx.try_recv(cx)),
+            Poll::Ready(Some(42))
+        );
+        assert!(tx.is_woken());
+        assert!(!rx.is_woken());
+
+        assert_eq!(
+            tx.enter(|cx, mut tx| tx.poll_ready(cx)),
+            Poll::Ready(Ok(()))
+        );
+        assert_eq!(tx.enter(|_, mut tx| tx.try_send(43)), Ok(()));
+        assert!(rx.is_woken());
+        assert_eq!(tx.enter(|cx, mut tx| tx.poll_ready(cx)), Poll::Pending);
+        assert_eq!(
+            tx.enter(|_, mut tx| tx.try_send(44)),
             Err(TrySendError::Pending(44))
         );
-        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(Some(43)));
-        assert!(mt.is_woken()); // sender is notified
-        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
-        assert_eq!(mt.enter(|_| tx.try_send(44)), Ok(()));
-        assert!(mt.is_woken());
+        assert_eq!(
+            rx.enter(|cx, mut rx| rx.try_recv(cx)),
+            Poll::Ready(Some(43))
+        );
+        assert!(tx.is_woken()); // sender is notified
+        assert_eq!(
+            tx.enter(|cx, mut tx| tx.poll_ready(cx)),
+            Poll::Ready(Ok(()))
+        );
+        assert_eq!(tx.enter(|_, mut tx| tx.try_send(44)), Ok(()));
+        assert!(rx.is_woken());
 
-        mt.enter(|_| drop(tx));
-        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(Some(44)));
-        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(None));
+        drop(tx);
+        assert_eq!(
+            rx.enter(|cx, mut rx| rx.try_recv(cx)),
+            Poll::Ready(Some(44))
+        );
+        assert_eq!(rx.enter(|cx, mut rx| rx.try_recv(cx)), Poll::Ready(None));
     }
 
     #[test]
     fn notified_on_empty_drop() {
-        let mut mt = MockTask::new();
+        let (tx, rx) = new::<usize>();
+        let tx = tokio_test::task::spawn(tx);
+        let mut rx = tokio_test::task::spawn(rx);
 
-        let (tx, mut rx) = new::<usize>();
-        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Pending);
-        assert!(!mt.is_woken());
-        mt.enter(|_| drop(tx));
-        assert!(mt.is_woken());
-        assert_eq!(mt.enter(|cx| rx.try_recv(cx)), Poll::Ready(None));
+        assert_eq!(rx.enter(|cx, mut rx| rx.try_recv(cx)), Poll::Pending);
+        assert!(!rx.is_woken());
+        drop(tx);
+        assert!(rx.is_woken());
+        assert_eq!(rx.enter(|cx, mut rx| rx.try_recv(cx)), Poll::Ready(None));
     }
 
     #[test]
     fn sender_sees_receiver_drop() {
-        let mut mt = MockTask::new();
+        let (tx, rx) = new::<usize>();
+        let mut tx = tokio_test::task::spawn(tx);
+        let rx = tokio_test::task::spawn(rx);
 
-        let (mut tx, rx) = new::<usize>();
-        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Ok(())));
-        mt.enter(|_| drop(rx));
-        assert_eq!(mt.enter(|cx| tx.poll_ready(cx)), Poll::Ready(Err(())));
-        assert_eq!(mt.enter(|_| tx.try_send(42)), Err(TrySendError::Closed(42)));
+        assert_eq!(
+            tx.enter(|cx, mut tx| tx.poll_ready(cx)),
+            Poll::Ready(Ok(()))
+        );
+        drop(rx);
+        assert_eq!(
+            tx.enter(|cx, mut tx| tx.poll_ready(cx)),
+            Poll::Ready(Err(()))
+        );
+        assert_eq!(
+            tx.enter(|_, mut tx| tx.try_send(42)),
+            Err(TrySendError::Closed(42))
+        );
     }
 }

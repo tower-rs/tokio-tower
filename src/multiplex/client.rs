@@ -121,7 +121,7 @@ where
 
 struct Pending<Tag, Item> {
     tag: Tag,
-    tx: tokio_sync::oneshot::Sender<ClientResponse<Item>>,
+    tx: tokio::sync::oneshot::Sender<ClientResponse<Item>>,
     #[cfg(feature = "tracing")]
     span: tracing::Span,
 }
@@ -170,7 +170,7 @@ where
     {
         let (tx, rx) = mediator::new();
         let in_flight = Arc::new(atomic::AtomicUsize::new(0));
-        tokio_executor::spawn({
+        tokio::spawn({
             let c = ClientInner {
                 mediator: rx,
                 responses: Default::default(),
@@ -364,7 +364,7 @@ where
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
-        let (tx, rx) = tokio_sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         #[cfg(feature = "tracing")]
         let span = tracing::Span::current();
         #[cfg(not(feature = "tracing"))]
