@@ -98,6 +98,7 @@ where
         }
     }
 
+    #[allow(deprecated)]
     fn description(&self) -> &str {
         match *self {
             Error::BrokenTransportSend(ref se) => se.description(),
