@@ -38,6 +38,8 @@
 //! [`pipeline::Client`]), and the server helper as `Server` in the same place.
 #![deny(missing_docs)]
 
+const YIELD_EVERY: usize = 64;
+
 macro_rules! event {
     ($span:expr, $($rest:tt)*) => {
         #[cfg(feature = "tracing")]

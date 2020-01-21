@@ -193,6 +193,9 @@ where
         let mut transport: Pin<_> = this.transport;
         let mut pending: Pin<_> = this.pending;
 
+        // track how many times we have iterated
+        let mut i = 0;
+
         loop {
             // first, poll pending futures to see if any have produced responses
             // note that we only poll for completed service futures if we can send the response
@@ -236,6 +239,14 @@ where
             if *this.finish {
                 // there's still work to be done, but there are no more requests
                 // so no need to check the incoming transport
+                return Poll::Pending;
+            }
+
+            // if we have run for a while without yielding, yield back so other tasks can run
+            i += 1;
+            if i == crate::YIELD_EVERY {
+                // we're forcing a yield, so need to ensure we get woken up again
+                cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
 
