@@ -186,6 +186,13 @@ where
     type Output = Result<(), Error<T, S>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        #[cfg(feature = "tracing")]
+        let span = tracing::trace_span!("poll");
+        #[cfg(feature = "tracing")]
+        let _guard = span.enter();
+        #[cfg(feature = "tracing")]
+        tracing::trace!("poll");
+
         // go through the deref so we can do partial borrows
         let this = self.project();
 
@@ -204,11 +211,15 @@ where
                     return Poll::Ready(Err(Error::from_sink_error(e)));
                 }
 
+                #[cfg(feature = "tracing")]
+                tracing::trace!(in_flight = %this.in_flight, pending = %pending.len(), "transport.ready");
                 match pending.as_mut().try_poll_next(cx) {
                     Poll::Ready(Some(Err(e))) => {
                         return Poll::Ready(Err(Error::from_service_error(e)));
                     }
                     Poll::Ready(Some(Ok(rsp))) => {
+                        #[cfg(feature = "tracing")]
+                        tracing::trace!("transport.start_send");
                         // try to send the response!
                         transport
                             .as_mut()
@@ -224,6 +235,8 @@ where
             }
 
             // also try to make progress on sending
+            #[cfg(feature = "tracing")]
+            tracing::trace!(finish = ?this.finish, "transport.poll_flush");
             if let Poll::Ready(()) = transport
                 .as_mut()
                 .poll_flush(cx)
@@ -246,13 +259,19 @@ where
             i += 1;
             if i == crate::YIELD_EVERY {
                 // we're forcing a yield, so need to ensure we get woken up again
+                #[cfg(feature = "tracing")]
+                tracing::trace!("forced yield");
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
 
             // is the service ready?
+            #[cfg(feature = "tracing")]
+            tracing::trace!("service.poll_ready");
             ready!(this.service.poll_ready(cx)).map_err(Error::from_service_error)?;
 
+            #[cfg(feature = "tracing")]
+            tracing::trace!("transport.poll_next");
             let rq = ready!(transport.as_mut().try_poll_next(cx))
                 .transpose()
                 .map_err(Error::from_stream_error)?;
@@ -262,7 +281,8 @@ where
                 pending.push(this.service.call(rq));
                 *this.in_flight += 1;
             } else {
-                // there are no more requests coming -- shut down
+                // there are no more requests coming
+                // check one more time for responses, and then yield
                 assert!(!*this.finish);
                 *this.finish = true;
             }
