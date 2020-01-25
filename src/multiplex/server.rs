@@ -211,7 +211,11 @@ where
                 }
 
                 #[cfg(feature = "tracing")]
-                tracing::trace!(in_flight = %this.in_flight, pending = %pending.len(), "transport.ready");
+                tracing::trace!(
+                    in_flight = *this.in_flight,
+                    pending = pending.len(),
+                    "transport.ready"
+                );
                 match pending.as_mut().try_poll_next(cx) {
                     Poll::Ready(Some(Err(e))) => {
                         return Poll::Ready(Err(Error::from_service_error(e)));
@@ -235,7 +239,7 @@ where
 
             // also try to make progress on sending
             #[cfg(feature = "tracing")]
-            tracing::trace!(finish = this.finish, "transport.poll_flush");
+            tracing::trace!(finish = *this.finish, "transport.poll_flush");
             if let Poll::Ready(()) = transport
                 .as_mut()
                 .poll_flush(cx)
