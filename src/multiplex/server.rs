@@ -235,7 +235,7 @@ where
 
             // also try to make progress on sending
             #[cfg(feature = "tracing")]
-            tracing::trace!(finish = ?this.finish, "transport.poll_flush");
+            tracing::trace!(finish = this.finish, "transport.poll_flush");
             if let Poll::Ready(()) = transport
                 .as_mut()
                 .poll_flush(cx)
