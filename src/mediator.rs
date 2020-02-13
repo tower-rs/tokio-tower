@@ -1,9 +1,11 @@
 use crossbeam::atomic::AtomicCell;
 use futures_core::task::Poll;
 use futures_util::task;
+use std::fmt;
 use std::sync::Arc;
 use std::task::Context;
 
+#[derive(Debug)]
 enum CellValue<T> {
     /// The sender has left a value.
     Some(T),
@@ -34,11 +36,35 @@ struct Mediator<T> {
     rx_task: task::AtomicWaker,
 }
 
+impl<T> fmt::Debug for Mediator<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Mediator")
+            .field("tx_task", &self.tx_task)
+            .field("rx_task", &self.rx_task)
+            .finish()
+    }
+}
+
 pub(crate) struct Receiver<T>(Arc<Mediator<T>>);
+
+impl<T> fmt::Debug for Receiver<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("Receiver").field(&self.0).finish()
+    }
+}
 
 pub(crate) struct Sender<T> {
     inner: Arc<Mediator<T>>,
     checked_ready: bool,
+}
+
+impl<T> fmt::Debug for Sender<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Sender")
+            .field("inner", &self.inner)
+            .field("checked_ready", &self.checked_ready)
+            .finish()
+    }
 }
 
 impl<T> Drop for Sender<T> {
