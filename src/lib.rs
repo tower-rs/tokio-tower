@@ -39,7 +39,6 @@
 //!
 //! # Example
 //! ```rust
-//! # type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 //! # use std::pin::Pin;
 //! # use std::boxed::Box;
 //! # use tokio::sync::mpsc;
@@ -47,21 +46,27 @@
 //! # use futures_core::task::{Context, Poll};
 //! # use futures_util::{never::Never, future::{poll_fn, ready, Ready}};
 //! # use tokio_tower::pipeline;
-//! /// Wrapper around our transport.
-//! /// Need to implement Sink and Stream for this.
-//! struct Pair {
-//!     rcv: mpsc::Receiver<String>,
-//!     snd: mpsc::Sender<String>,
+//! # use core::fmt::Debug;
+//! type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
+//!
+//! /// Wrapper around our mpsc channel transport.
+//! ///
+//! /// mpsc::Sender and mpsc::Receiver operate at the level of individual items,
+//! /// but tokio-tower requires Sink + Stream. To bridge this gap,
+//! /// we have to provide implementations of Sink and Stream.
+//! struct Pair<T> {
+//!     rcv: mpsc::Receiver<T>,
+//!     snd: mpsc::Sender<T>,
 //! }
 //!
-//! impl futures_sink::Sink<String> for Pair {
+//! impl<T: Debug> futures_sink::Sink<T> for Pair<T> {
 //!     type Error = StdError;
 //!
 //!     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-//!         self.snd.poll_ready(cx).map_err(|e| e.into())
+//!         self.snd.poll_ready(cx).map(|e| Ok(e?))
 //!     }
 //!
-//!     fn start_send(mut self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
+//!     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
 //!         // unwrap ok because of poll_ready()
 //!         self.snd.try_send(item).unwrap();
 //!         Ok(())
@@ -72,12 +77,12 @@
 //!     }
 //!
 //!     fn poll_close( self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-//!         Poll::Ready(Ok(()))
+//!         Poll::Ready(Ok(())) // no-op because channel is closed on drop and flush is no-op
 //!     }
 //! }
 //!
-//! impl futures_util::stream::Stream for Pair {
-//!     type Item = Result<String, StdError>;
+//! impl<T> futures_util::stream::Stream for Pair<T> {
+//!     type Item = Result<T, StdError>;
 //!
 //!     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 //!         self.rcv.poll_recv(cx).map(|s| s.map(Ok))
@@ -85,10 +90,11 @@
 //! }
 //!
 //! /// A service that tokio-tower should serve over the transport.
+//! /// This one just echoes whatever it gets.
 //! struct Echo;
 //!
-//! impl tower_service::Service<String> for Echo {
-//!     type Response = String;
+//! impl<T> tower_service::Service<T> for Echo {
+//!     type Response = T;
 //!     type Error = Never;
 //!     type Future = Ready<Result<Self::Response, Self::Error>>;
 //!
@@ -96,12 +102,12 @@
 //!         Poll::Ready(Ok(()))
 //!     }
 //!
-//!     fn call(&mut self, req: String) -> Self::Future {
+//!     fn call(&mut self, req: T) -> Self::Future {
 //!         ready(Ok(req))
 //!     }
 //! }
 //!
-//! # #[tokio::main]
+//! #[tokio::main]
 //! async fn main() {
 //!     let (s1, r1) = mpsc::channel(2);
 //!     let (s2, r2) = mpsc::channel(2);
@@ -109,7 +115,7 @@
 //!     let pair2 = Pair{snd: s2, rcv: r1};
 //!
 //!     tokio::spawn(pipeline::Server::new(pair1, Echo));
-//!     let mut client = pipeline::Client::<_, tokio_tower::Error<Pair, String>, _>::new(pair2);
+//!     let mut client = pipeline::Client::<_, tokio_tower::Error<Pair<String>, String>, _>::new(pair2);
 //!
 //!     use tower_service::Service;
 //!     poll_fn(|cx| client.poll_ready(cx)).await;
