@@ -63,7 +63,7 @@
 //!     type Error = StdError;
 //!
 //!     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-//!         self.snd.poll_ready(cx).map(|e| Ok(e?))
+//!         self.snd.poll_ready(cx).map_err(|e| e.into())
 //!     }
 //!
 //!     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
