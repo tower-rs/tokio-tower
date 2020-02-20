@@ -27,9 +27,11 @@
 //! other crates (like [`tokio-codec`](https://docs.rs/tokio-codec/) or
 //! [`async-bincode`](https://docs.rs/async-bincode)) and instead operates at the level of
 //! [`Sink`](https://docs.rs/futures/0.1/futures/sink/trait.Sink.html)s and
-//! [`Stream`](https://docs.rs/futures/0.15/futures/stream/trait.Stream.html)s. In particular, it
-//! assumes that there exists a `Sink + Stream` transport where it can send `Request`s and receive
-//! `Response`s, or vice-versa for the server side.
+//! [`Stream`](https://docs.rs/futures/0.15/futures/stream/trait.Stream.html)s.
+//!
+//! At its core, `tokio-tower` wraps a type that is `Sink + Stream`. On the client side, the Sink is used to send requests,
+//! and the Stream is used to receive responses (from the server) to those requests. On the server side, the Stream is
+//! used to receive requests, and the Sink is used to send the responses.  
 //!
 //! # Servers and clients
 //!
@@ -51,9 +53,13 @@
 //!
 //! /// Wrapper around our mpsc channel transport.
 //! ///
-//! /// mpsc::Sender and mpsc::Receiver operate at the level of individual items,
-//! /// but tokio-tower requires Sink + Stream. To bridge this gap,
-//! /// we have to provide implementations of Sink and Stream.
+//! /// tokio-tower requires our mpsc-based transport implement Sink + Stream (see "Transports" above), but our mpsc channel operates on
+//! /// items of type T. To bridge this gap, we have to provide implementations of Sink and Stream.
+//! ///
+//! /// Also, mpsc::Sender and mpsc::Receiver are each unidirectional. So, if we want to use mpsc to send requests
+//! /// and responses between a client and server, we therefore need two channels, one that lets requests
+//! /// flow from the client to the server, and one that lets responses flow the other way.
+//! /// In this echo server example, requests and responses are both of type T, but the two types are usually different.
 //! struct Pair<T> {
 //!     rcv: mpsc::Receiver<T>,
 //!     snd: mpsc::Sender<T>,
