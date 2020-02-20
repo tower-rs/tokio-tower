@@ -54,9 +54,9 @@
 //! /// Wrapper around an mpsc channel transport.
 //! ///
 //! /// mpsc::Sender and mpsc::Receiver are each unidirectional. So, if we want to use mpsc to send requests
-//! /// and responses between a client and server, we therefore need two channels, one that lets requests
+//! /// and responses between a client and server, we need *two* channels, one that lets requests
 //! /// flow from the client to the server, and one that lets responses flow the other way.
-//! /// In this echo server example, requests and responses are both of type T, but the two types are usually different.
+//! /// In this echo server example, requests and responses are both of type T, but for "real" services, the two types are usually different.
 //! ///
 //! /// tokio-tower requires transports to implement Sink + Stream (see "Transports" above), but we
 //! /// have a separate Sender (analogous to a Sink) and Receiver (which implements Stream).
