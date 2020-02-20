@@ -51,15 +51,17 @@
 //! # use core::fmt::Debug;
 //! type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 //!
-//! /// Wrapper around our mpsc channel transport.
+//! /// Wrapper around an mpsc channel transport.
 //! ///
-//! /// tokio-tower requires our mpsc-based transport implement Sink + Stream (see "Transports" above), but our mpsc channel operates on
-//! /// items of type T. To bridge this gap, we have to provide implementations of Sink and Stream.
-//! ///
-//! /// Also, mpsc::Sender and mpsc::Receiver are each unidirectional. So, if we want to use mpsc to send requests
+//! /// mpsc::Sender and mpsc::Receiver are each unidirectional. So, if we want to use mpsc to send requests
 //! /// and responses between a client and server, we therefore need two channels, one that lets requests
 //! /// flow from the client to the server, and one that lets responses flow the other way.
 //! /// In this echo server example, requests and responses are both of type T, but the two types are usually different.
+//! ///
+//! /// tokio-tower requires transports to implement Sink + Stream (see "Transports" above), but we
+//! /// have a separate Sender (analogous to a Sink) and Receiver (which implements Stream).
+//! /// To bridge this gap, we have to provide implementations of Sink and Stream which call into
+//! /// the sender and receiver respectively.
 //! struct Pair<T> {
 //!     rcv: mpsc::Receiver<T>,
 //!     snd: mpsc::Sender<T>,
