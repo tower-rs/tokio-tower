@@ -36,6 +36,90 @@
 //! This crate provides utilities that make writing both clients and servers easier. You'll find
 //! the client helper as `Client` in the protocol module you're working with (e.g.,
 //! [`pipeline::Client`]), and the server helper as `Server` in the same place.
+//!
+//! # Example
+//! ```rust
+//! # type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
+//! # use std::pin::Pin;
+//! # use std::boxed::Box;
+//! # use tokio::sync::mpsc;
+//! # use tokio::io::{AsyncWrite, AsyncRead};
+//! # use futures_core::task::{Context, Poll};
+//! # use futures_util::{never::Never, future::{poll_fn, ready, Ready}};
+//! # use tokio_tower::pipeline;
+//! /// Wrapper around our transport.
+//! /// Need to implement Sink and Stream for this.
+//! struct Pair {
+//!     rcv: mpsc::Receiver<String>,
+//!     snd: mpsc::Sender<String>,
+//! }
+//!
+//! impl futures_sink::Sink<String> for Pair {
+//!     type Error = StdError;
+//!
+//!     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         self.snd.poll_ready(cx).map_err(|e| e.into())
+//!     }
+//!
+//!     fn start_send(mut self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
+//!         // unwrap ok because of poll_ready()
+//!         self.snd.try_send(item).unwrap();
+//!         Ok(())
+//!     }
+//!
+//!     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         Poll::Ready(Ok(())) // no-op because all sends succeed immediately
+//!     }
+//!
+//!     fn poll_close( self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         Poll::Ready(Ok(()))
+//!     }
+//! }
+//!
+//! impl futures_util::stream::Stream for Pair {
+//!     type Item = Result<String, StdError>;
+//!
+//!     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+//!         self.rcv.poll_recv(cx).map(|s| s.map(Ok))
+//!     }
+//! }
+//!
+//! /// A service that tokio-tower should serve over the transport.
+//! struct Echo;
+//!
+//! impl tower_service::Service<String> for Echo {
+//!     type Response = String;
+//!     type Error = Never;
+//!     type Future = Ready<Result<Self::Response, Self::Error>>;
+//!
+//!     fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         Poll::Ready(Ok(()))
+//!     }
+//!
+//!     fn call(&mut self, req: String) -> Self::Future {
+//!         ready(Ok(req))
+//!     }
+//! }
+//!
+//! # #[tokio::main]
+//! async fn main() {
+//!     let (s1, r1) = mpsc::channel(2);
+//!     let (s2, r2) = mpsc::channel(2);
+//!     let pair1 = Pair{snd: s1, rcv: r2};
+//!     let pair2 = Pair{snd: s2, rcv: r1};
+//!
+//!     tokio::spawn(pipeline::Server::new(pair1, Echo));
+//!     let mut client = pipeline::Client::<_, tokio_tower::Error<Pair, String>, _>::new(pair2);
+//!
+//!     use tower_service::Service;
+//!     poll_fn(|cx| client.poll_ready(cx)).await;
+//!
+//!     let msg = "Hello, tokio-tower";
+//!     let resp = client.call(String::from(msg)).await.expect("client call");
+//!     assert_eq!(resp, msg);
+//! }
+//!
+//! ```
 #![deny(missing_docs)]
 
 const YIELD_EVERY: usize = 24;
