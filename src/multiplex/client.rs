@@ -104,6 +104,8 @@ impl<NT, Request> tower_load::Load for Maker<NT, Request> {
     }
 }
 
+// ===== Client =====
+
 /// This type provides an implementation of a Tower
 /// [`Service`](https://docs.rs/tokio-service/0.1/tokio_service/trait.Service.html) on top of a
 /// request-at-a-time protocol transport. In particular, it wraps a transport that implements
@@ -117,6 +119,20 @@ where
     in_flight: Arc<atomic::AtomicUsize>,
     _error: PhantomData<fn(E)>,
 }
+
+impl<T, E, Request> fmt::Debug for Client<T, E, Request>
+where
+    T: Sink<Request> + TryStream,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("mediator", &self.mediator)
+            .field("in_flight", &self.in_flight)
+            .finish()
+    }
+}
+
+// ===== ClientInner =====
 
 struct Pending<Tag, Item> {
     tag: Tag,

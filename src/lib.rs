@@ -27,15 +27,108 @@
 //! other crates (like [`tokio-codec`](https://docs.rs/tokio-codec/) or
 //! [`async-bincode`](https://docs.rs/async-bincode)) and instead operates at the level of
 //! [`Sink`](https://docs.rs/futures/0.1/futures/sink/trait.Sink.html)s and
-//! [`Stream`](https://docs.rs/futures/0.15/futures/stream/trait.Stream.html)s. In particular, it
-//! assumes that there exists a `Sink + Stream` transport where it can send `Request`s and receive
-//! `Response`s, or vice-versa for the server side.
+//! [`Stream`](https://docs.rs/futures/0.15/futures/stream/trait.Stream.html)s.
+//!
+//! At its core, `tokio-tower` wraps a type that is `Sink + Stream`. On the client side, the Sink is used to send requests,
+//! and the Stream is used to receive responses (from the server) to those requests. On the server side, the Stream is
+//! used to receive requests, and the Sink is used to send the responses.  
 //!
 //! # Servers and clients
 //!
 //! This crate provides utilities that make writing both clients and servers easier. You'll find
 //! the client helper as `Client` in the protocol module you're working with (e.g.,
 //! [`pipeline::Client`]), and the server helper as `Server` in the same place.
+//!
+//! # Example
+//! ```rust
+//! # use std::pin::Pin;
+//! # use std::boxed::Box;
+//! # use tokio::sync::mpsc;
+//! # use tokio::io::{AsyncWrite, AsyncRead};
+//! # use futures_core::task::{Context, Poll};
+//! # use futures_util::{never::Never, future::{poll_fn, ready, Ready}};
+//! # use tokio_tower::pipeline;
+//! # use core::fmt::Debug;
+//! type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
+//!
+//! /// Wrapper around an mpsc channel transport.
+//! ///
+//! /// mpsc::Sender and mpsc::Receiver are each unidirectional. So, if we want to use mpsc to send requests
+//! /// and responses between a client and server, we need *two* channels, one that lets requests
+//! /// flow from the client to the server, and one that lets responses flow the other way.
+//! /// In this echo server example, requests and responses are both of type T, but for "real" services, the two types are usually different.
+//! struct Pair<T> {
+//!     rcv: mpsc::Receiver<T>,
+//!     snd: mpsc::Sender<T>,
+//! }
+//!
+//! impl<T: Debug> futures_sink::Sink<T> for Pair<T> {
+//!     type Error = StdError;
+//!
+//!     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         self.snd.poll_ready(cx).map_err(|e| e.into())
+//!     }
+//!
+//!     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+//!         // unwrap ok because of poll_ready()
+//!         self.snd.try_send(item).unwrap();
+//!         Ok(())
+//!     }
+//!
+//!     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         Poll::Ready(Ok(())) // no-op because all sends succeed immediately
+//!     }
+//!
+//!     fn poll_close( self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         Poll::Ready(Ok(())) // no-op because channel is closed on drop and flush is no-op
+//!     }
+//! }
+//!
+//! impl<T> futures_util::stream::Stream for Pair<T> {
+//!     type Item = Result<T, StdError>;
+//!
+//!     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+//!         self.rcv.poll_recv(cx).map(|s| s.map(Ok))
+//!     }
+//! }
+//!
+//! /// A service that tokio-tower should serve over the transport.
+//! /// This one just echoes whatever it gets.
+//! struct Echo;
+//!
+//! impl<T> tower_service::Service<T> for Echo {
+//!     type Response = T;
+//!     type Error = Never;
+//!     type Future = Ready<Result<Self::Response, Self::Error>>;
+//!
+//!     fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+//!         Poll::Ready(Ok(()))
+//!     }
+//!
+//!     fn call(&mut self, req: T) -> Self::Future {
+//!         ready(Ok(req))
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let (s1, r1) = mpsc::channel(2);
+//!     let (s2, r2) = mpsc::channel(2);
+//!     let pair1 = Pair{snd: s1, rcv: r2};
+//!     let pair2 = Pair{snd: s2, rcv: r1};
+//!
+//!     tokio::spawn(pipeline::Server::new(pair1, Echo));
+//!     let mut client = pipeline::Client::<_, tokio_tower::Error<Pair<String>, String>, _>::new(pair2);
+//!
+//!     use tower_service::Service;
+//!     poll_fn(|cx| client.poll_ready(cx)).await;
+//!
+//!     let msg = "Hello, tokio-tower";
+//!     let resp = client.call(String::from(msg)).await.expect("client call");
+//!     assert_eq!(resp, msg);
+//! }
+//!
+//! ```
 #![deny(missing_docs)]
 
 const YIELD_EVERY: usize = 24;
