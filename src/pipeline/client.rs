@@ -17,9 +17,6 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
-#[cfg(feature = "tracing")]
-use tracing::Level;
-
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
 pub struct Maker<NT, Request> {
@@ -116,7 +113,6 @@ where
 
 struct Pending<Item> {
     tx: tokio::sync::oneshot::Sender<ClientResponse<Item>>,
-    #[cfg(feature = "tracing")]
     span: tracing::Span,
 }
 
@@ -219,23 +215,18 @@ where
                     span: _span,
                     res,
                 })) => {
-                    #[cfg(feature = "tracing")]
                     let guard = _span.enter();
-                    #[cfg(feature = "tracing")]
-                    tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
+                    tracing::trace!("request received by worker; sending to Sink");
 
                     transport
                         .as_mut()
                         .start_send(req)
                         .map_err(Error::from_sink_error)?;
-                    #[cfg(feature = "tracing")]
-                    tracing::event!(Level::TRACE, "request sent");
-                    #[cfg(feature = "tracing")]
+                    tracing::trace!("request sent");
                     drop(guard);
 
                     this.responses.push_back(Pending {
                         tx: res,
-                        #[cfg(feature = "tracing")]
                         span: _span,
                     });
                     this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -300,12 +291,11 @@ where
                         .responses
                         .pop_front()
                         .expect("got a request with no sender?");
-                    event!(pending.span, Level::TRACE, "response arrived; forwarding");
+                    tracing::trace!(parent: &pending.span, "response arrived; forwarding");
 
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
-                        #[cfg(feature = "tracing")]
                         span: pending.span,
                     });
                     this.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
@@ -356,19 +346,15 @@ where
 
     fn call(&mut self, req: Request) -> Self::Future {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        #[cfg(feature = "tracing")]
         let span = tracing::Span::current();
-        #[cfg(not(feature = "tracing"))]
-        let span = ();
-        event!(span, Level::TRACE, "issuing request");
+        tracing::trace!("issuing request");
         let req = ClientRequest { req, span, res: tx };
         let r = self.mediator.try_send(req);
         Box::pin(async move {
             match r {
                 Ok(()) => match rx.await {
                     Ok(r) => {
-                        // TODO: provide a variant that lets you get at the span too
-                        event!(r.span, tracing::Level::TRACE, "response returned");
+                        tracing::trace!(parent: &r.span, "response returned");
                         Ok(r.response)
                     }
                     Err(_) => Err(E::from(Error::ClientDropped)),

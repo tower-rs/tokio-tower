@@ -137,13 +137,6 @@
 
 const YIELD_EVERY: usize = 24;
 
-macro_rules! event {
-    ($span:expr, $($rest:tt)*) => {
-        #[cfg(feature = "tracing")]
-        $span.in_scope(|| tracing::event!($($rest)*));
-    };
-}
-
 mod error;
 mod mediator;
 pub(crate) mod wrappers;

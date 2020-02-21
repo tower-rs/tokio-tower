@@ -18,7 +18,7 @@ azure-devops = { project = "tower-rs/tokio-tower", pipeline = "tokio-tower", bui
 
 [features]
 log = ["tracing/log"]
-default = ["tracing"]
+default = []
 
 [dependencies]
 tower-service = "0.3"
@@ -28,7 +28,7 @@ futures-core = "0.3"
 futures-sink = "0.3"
 tokio = { version = "0.2", features = [ "sync" ] }
 crossbeam = "0.7"
-tracing = { version = "0.1.2", optional = true }
+tracing = "0.1.2"
 pin-project = "0.4.0"
 
 [dev-dependencies]
