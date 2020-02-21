@@ -17,7 +17,6 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
-#[cfg(feature = "tracing")]
 use tracing::Level;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
@@ -122,7 +121,6 @@ where
 struct Pending<Tag, Item> {
     tag: Tag,
     tx: tokio::sync::oneshot::Sender<ClientResponse<Item>>,
-    #[cfg(feature = "tracing")]
     span: tracing::Span,
 }
 
@@ -228,24 +226,19 @@ where
                 })) => {
                     let id = transport.as_mut().assign_tag(&mut req);
 
-                    #[cfg(feature = "tracing")]
                     let guard = _span.enter();
-                    #[cfg(feature = "tracing")]
                     tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
 
                     transport
                         .as_mut()
                         .start_send(req)
                         .map_err(Error::from_sink_error)?;
-                    #[cfg(feature = "tracing")]
                     tracing::event!(Level::TRACE, "request sent");
-                    #[cfg(feature = "tracing")]
                     drop(guard);
 
                     this.responses.push_back(Pending {
                         tag: id,
                         tx: res,
-                        #[cfg(feature = "tracing")]
                         span: _span,
                     });
                     this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
@@ -319,14 +312,15 @@ where
                     // (i.e., was issued a while ago). so, for the swap needed for efficient
                     // remove, we want to swap with something else that is close to the front.
                     let pending = this.responses.swap_remove_front(pending).unwrap();
-                    event!(pending.span, Level::TRACE, "response arrived; forwarding");
+                    pending
+                        .span
+                        .in_scope(|| tracing::event!(Level::TRACE, "response arrived; forwarding"));
 
                     // ignore send failures
                     // the client may just no longer care about the response
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
                         response: r,
-                        #[cfg(feature = "tracing")]
                         span: pending.span,
                     });
                     this.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
@@ -377,19 +371,17 @@ where
 
     fn call(&mut self, req: Request) -> Self::Future {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        #[cfg(feature = "tracing")]
         let span = tracing::Span::current();
-        #[cfg(not(feature = "tracing"))]
-        let span = ();
-        event!(span, Level::TRACE, "issuing request");
+        span.in_scope(|| tracing::event!(Level::TRACE, "issuing request"));
         let req = ClientRequest { req, span, res: tx };
         let r = self.mediator.try_send(req);
         Box::pin(async move {
             match r {
                 Ok(()) => match rx.await {
                     Ok(r) => {
-                        // TODO: provide a variant that lets you get at the span too
-                        event!(r.span, tracing::Level::TRACE, "response returned");
+                        r.span.in_scope(|| {
+                            tracing::event!(tracing::Level::TRACE, "response returned")
+                        });
                         Ok(r.response)
                     }
                     Err(_) => Err(E::from(Error::ClientDropped)),
