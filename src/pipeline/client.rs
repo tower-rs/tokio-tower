@@ -17,8 +17,6 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
-use tracing::Level;
-
 /// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
 /// fresh `Client`s.
 pub struct Maker<NT, Request> {
@@ -218,13 +216,13 @@ where
                     res,
                 })) => {
                     let guard = _span.enter();
-                    tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
+                    tracing::trace!("request received by worker; sending to Sink");
 
                     transport
                         .as_mut()
                         .start_send(req)
                         .map_err(Error::from_sink_error)?;
-                    tracing::event!(Level::TRACE, "request sent");
+                    tracing::trace!("request sent");
                     drop(guard);
 
                     this.responses.push_back(Pending {
@@ -293,9 +291,7 @@ where
                         .responses
                         .pop_front()
                         .expect("got a request with no sender?");
-                    pending
-                        .span
-                        .in_scope(|| tracing::event!(Level::TRACE, "response arrived; forwarding"));
+                    tracing::trace!(parent: &pending.span, "response arrived; forwarding");
 
                     let sender = pending.tx;
                     let _ = sender.send(ClientResponse {
@@ -351,16 +347,14 @@ where
     fn call(&mut self, req: Request) -> Self::Future {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let span = tracing::Span::current();
-        span.in_scope(|| tracing::event!(Level::TRACE, "issuing request"));
+        tracing::trace!(parent: &span, "issuing request");
         let req = ClientRequest { req, span, res: tx };
         let r = self.mediator.try_send(req);
         Box::pin(async move {
             match r {
                 Ok(()) => match rx.await {
                     Ok(r) => {
-                        r.span.in_scope(|| {
-                            tracing::event!(tracing::Level::TRACE, "response returned")
-                        });
+                        tracing::trace!(parent: &r.span, "response returned");
                         Ok(r.response)
                     }
                     Err(_) => Err(E::from(Error::ClientDropped)),

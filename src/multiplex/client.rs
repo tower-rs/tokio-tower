@@ -17,8 +17,6 @@ use std::sync::{atomic, Arc};
 use std::{error, fmt};
 use tower_service::Service;
 
-use tracing::Level;
-
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
 
@@ -243,13 +241,13 @@ where
                     let id = transport.as_mut().assign_tag(&mut req);
 
                     let guard = _span.enter();
-                    tracing::event!(Level::TRACE, "request received by worker; sending to Sink");
+                    tracing::trace!("request received by worker; sending to Sink");
 
                     transport
                         .as_mut()
                         .start_send(req)
                         .map_err(Error::from_sink_error)?;
-                    tracing::event!(Level::TRACE, "request sent");
+                    tracing::trace!("request sent");
                     drop(guard);
 
                     this.responses.push_back(Pending {
@@ -328,9 +326,7 @@ where
                     // (i.e., was issued a while ago). so, for the swap needed for efficient
                     // remove, we want to swap with something else that is close to the front.
                     let pending = this.responses.swap_remove_front(pending).unwrap();
-                    pending
-                        .span
-                        .in_scope(|| tracing::event!(Level::TRACE, "response arrived; forwarding"));
+                    tracing::trace!(parent: &pending.span, "response arrived; forwarding");
 
                     // ignore send failures
                     // the client may just no longer care about the response
@@ -388,16 +384,14 @@ where
     fn call(&mut self, req: Request) -> Self::Future {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let span = tracing::Span::current();
-        span.in_scope(|| tracing::event!(Level::TRACE, "issuing request"));
+        tracing::trace!(parent: &span, "issuing request");
         let req = ClientRequest { req, span, res: tx };
         let r = self.mediator.try_send(req);
         Box::pin(async move {
             match r {
                 Ok(()) => match rx.await {
                     Ok(r) => {
-                        r.span.in_scope(|| {
-                            tracing::event!(tracing::Level::TRACE, "response returned")
-                        });
+                        tracing::trace!(parent: &r.span, "response returned");
                         Ok(r.response)
                     }
                     Err(_) => Err(E::from(Error::ClientDropped)),
