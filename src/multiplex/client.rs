@@ -384,7 +384,7 @@ where
     fn call(&mut self, req: Request) -> Self::Future {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let span = tracing::Span::current();
-        tracing::trace!(parent: &span, "issuing request");
+        tracing::trace!("issuing request");
         let req = ClientRequest { req, span, res: tx };
         let r = self.mediator.try_send(req);
         Box::pin(async move {
