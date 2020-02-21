@@ -29,9 +29,10 @@
 //! [`Sink`](https://docs.rs/futures/0.1/futures/sink/trait.Sink.html)s and
 //! [`Stream`](https://docs.rs/futures/0.15/futures/stream/trait.Stream.html)s.
 //!
-//! At its core, `tokio-tower` wraps a type that is `Sink + Stream`. On the client side, the Sink is used to send requests,
-//! and the Stream is used to receive responses (from the server) to those requests. On the server side, the Stream is
-//! used to receive requests, and the Sink is used to send the responses.  
+//! At its core, `tokio-tower` wraps a type that is `Sink + Stream`. On the client side, the Sink
+//! is used to send requests, and the Stream is used to receive responses (from the server) to
+//! those requests. On the server side, the Stream is used to receive requests, and the Sink is
+//! used to send the responses.
 //!
 //! # Servers and clients
 //!
@@ -51,18 +52,21 @@
 //! # use core::fmt::Debug;
 //! type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 //!
-//! /// Wrapper around an mpsc channel transport.
+//! /// A transport implemented using a pair of `mpsc` channels.
 //! ///
-//! /// mpsc::Sender and mpsc::Receiver are each unidirectional. So, if we want to use mpsc to send requests
-//! /// and responses between a client and server, we need *two* channels, one that lets requests
-//! /// flow from the client to the server, and one that lets responses flow the other way.
-//! /// In this echo server example, requests and responses are both of type T, but for "real" services, the two types are usually different.
-//! struct Pair<T> {
+//! /// `mpsc::Sender` and `mpsc::Receiver` are both unidirectional. So, if we want to use `mpsc`
+//! /// to send requests and responses between a client and server, we need *two* channels, one
+//! /// that lets requests flow from the client to the server, and one that lets responses flow the
+//! /// other way.
+//! ///
+//! /// In this echo server example, requests and responses are both of type `T`, but for "real"
+//! /// services, the two types are usually different.
+//! struct ChannelTransport<T> {
 //!     rcv: mpsc::Receiver<T>,
 //!     snd: mpsc::Sender<T>,
 //! }
 //!
-//! impl<T: Debug> futures_sink::Sink<T> for Pair<T> {
+//! impl<T: Debug> futures_sink::Sink<T> for ChannelTransport<T> {
 //!     type Error = StdError;
 //!
 //!     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
@@ -84,7 +88,7 @@
 //!     }
 //! }
 //!
-//! impl<T> futures_util::stream::Stream for Pair<T> {
+//! impl<T> futures_util::stream::Stream for ChannelTransport<T> {
 //!     type Item = Result<T, StdError>;
 //!
 //!     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -114,11 +118,11 @@
 //! async fn main() {
 //!     let (s1, r1) = mpsc::channel(2);
 //!     let (s2, r2) = mpsc::channel(2);
-//!     let pair1 = Pair{snd: s1, rcv: r2};
-//!     let pair2 = Pair{snd: s2, rcv: r1};
+//!     let pair1 = ChannelTransport{snd: s1, rcv: r2};
+//!     let pair2 = ChannelTransport{snd: s2, rcv: r1};
 //!
 //!     tokio::spawn(pipeline::Server::new(pair1, Echo));
-//!     let mut client = pipeline::Client::<_, tokio_tower::Error<Pair<String>, String>, _>::new(pair2);
+//!     let mut client = pipeline::Client::<_, tokio_tower::Error<_, _>, _>::new(pair2);
 //!
 //!     use tower_service::Service;
 //!     poll_fn(|cx| client.poll_ready(cx)).await;
