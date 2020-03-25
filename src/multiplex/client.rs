@@ -287,14 +287,16 @@ where
                 // we're closing up shop!
                 //
                 // poll_close() implies poll_flush()
-                let _ = transport
+                let r = transport
                     .as_mut()
                     .poll_close(cx)
                     .map_err(Error::from_sink_error)?;
 
-                // now that close has completed, we should never send anything again
-                // we only need to receive to make the in-flight requests complete
-                *this.rx_only = true;
+                if r.is_ready() {
+                    // now that close has completed, we should never send anything again
+                    // we only need to receive to make the in-flight requests complete
+                    *this.rx_only = true;
+                }
             } else {
                 let _ = transport
                     .as_mut()
