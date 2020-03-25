@@ -226,54 +226,56 @@ where
         // track how many times we have iterated
         let mut i = 0;
 
-        while let Poll::Ready(r) = transport.as_mut().poll_ready(cx) {
-            if let Err(e) = r {
-                return Poll::Ready(Err(E::from(Error::from_sink_error(e))));
-            }
+        if !*this.finish {
+            while let Poll::Ready(r) = transport.as_mut().poll_ready(cx) {
+                if let Err(e) = r {
+                    return Poll::Ready(Err(E::from(Error::from_sink_error(e))));
+                }
 
-            // send more requests if we have them
-            match this.mediator.try_recv(cx) {
-                Poll::Ready(Some(ClientRequest {
-                    mut req,
-                    span: _span,
-                    res,
-                })) => {
-                    let id = transport.as_mut().assign_tag(&mut req);
-
-                    let guard = _span.enter();
-                    tracing::trace!("request received by worker; sending to Sink");
-
-                    transport
-                        .as_mut()
-                        .start_send(req)
-                        .map_err(Error::from_sink_error)?;
-                    tracing::trace!("request sent");
-                    drop(guard);
-
-                    this.responses.push_back(Pending {
-                        tag: id,
-                        tx: res,
+                // send more requests if we have them
+                match this.mediator.try_recv(cx) {
+                    Poll::Ready(Some(ClientRequest {
+                        mut req,
                         span: _span,
-                    });
-                    this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
+                        res,
+                    })) => {
+                        let id = transport.as_mut().assign_tag(&mut req);
 
-                    // if we have run for a while without yielding, yield so we can make progress
-                    i += 1;
-                    if i == crate::YIELD_EVERY {
-                        // we're forcing a yield, so need to ensure we get woken up again
-                        cx.waker().wake_by_ref();
-                        // we still want to execute the code below the loop
+                        let guard = _span.enter();
+                        tracing::trace!("request received by worker; sending to Sink");
+
+                        transport
+                            .as_mut()
+                            .start_send(req)
+                            .map_err(Error::from_sink_error)?;
+                        tracing::trace!("request sent");
+                        drop(guard);
+
+                        this.responses.push_back(Pending {
+                            tag: id,
+                            tx: res,
+                            span: _span,
+                        });
+                        this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
+
+                        // if we have run for a while without yielding, yield so we can make progress
+                        i += 1;
+                        if i == crate::YIELD_EVERY {
+                            // we're forcing a yield, so need to ensure we get woken up again
+                            cx.waker().wake_by_ref();
+                            // we still want to execute the code below the loop
+                            break;
+                        }
+                    }
+                    Poll::Ready(None) => {
+                        // XXX: should we "give up" the Sink::poll_ready here?
+                        *this.finish = true;
                         break;
                     }
-                }
-                Poll::Ready(None) => {
-                    // XXX: should we "give up" the Sink::poll_ready here?
-                    *this.finish = true;
-                    break;
-                }
-                Poll::Pending => {
-                    // XXX: should we "give up" the Sink::poll_ready here?
-                    break;
+                    Poll::Pending => {
+                        // XXX: should we "give up" the Sink::poll_ready here?
+                        break;
+                    }
                 }
             }
         }
