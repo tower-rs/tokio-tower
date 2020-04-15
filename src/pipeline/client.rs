@@ -291,10 +291,7 @@ where
                 Some(r) => {
                     // ignore send failures
                     // the client may just no longer care about the response
-                    let pending = this
-                        .responses
-                        .pop_front()
-                        .expect("got a request with no sender?");
+                    let pending = this.responses.pop_front().ok_or(Error::Desynchronized)?;
                     tracing::trace!(parent: &pending.span, "response arrived; forwarding");
 
                     let sender = pending.tx;

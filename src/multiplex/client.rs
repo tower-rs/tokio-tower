@@ -324,7 +324,7 @@ where
                         .responses
                         .iter()
                         .position(|&Pending { ref tag, .. }| tag == &id)
-                        .expect("got a request with no sender?");
+                        .ok_or(Error::Desynchronized)?;
 
                     // this request just finished, which means it's _probably_ near the front
                     // (i.e., was issued a while ago). so, for the swap needed for efficient
