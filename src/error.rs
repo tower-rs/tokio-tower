@@ -22,6 +22,9 @@ where
 
     /// Attempted to issue a `call`, but the underlying transport has been closed.
     ClientDropped,
+
+    /// The server sent a response that the client was not expecting.
+    Desynchronized,
 }
 
 impl<T, I> fmt::Display for Error<T, I>
@@ -37,6 +40,7 @@ where
             Error::BrokenTransportRecv(None) => f.pad("transport closed with in-flight requests"),
             Error::TransportFull => f.pad("no more in-flight requests allowed"),
             Error::ClientDropped => f.pad("Client was dropped"),
+            Error::Desynchronized => f.pad("server sent a response the client did not expect"),
         }
     }
 }
@@ -54,6 +58,7 @@ where
             Error::BrokenTransportRecv(None) => f.pad("BrokenTransportRecv"),
             Error::TransportFull => f.pad("TransportFull"),
             Error::ClientDropped => f.pad("ClientDropped"),
+            Error::Desynchronized => f.pad("Desynchronized"),
         }
     }
 }
@@ -80,6 +85,7 @@ where
             Error::BrokenTransportRecv(None) => "transport closed with in-flight requests",
             Error::TransportFull => "no more in-flight requests allowed",
             Error::ClientDropped => "Client was dropped",
+            Error::Desynchronized => "server sent a response the client did not expect",
         }
     }
 }
