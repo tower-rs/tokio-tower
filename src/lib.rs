@@ -133,7 +133,13 @@
 //! }
 //!
 //! ```
-#![deny(missing_docs)]
+#![warn(
+    missing_docs,
+    missing_debug_implementations,
+    unreachable_pub,
+    rust_2018_idioms
+)]
+#![allow(clippy::type_complexity)]
 
 const YIELD_EVERY: usize = 24;
 
@@ -185,7 +191,7 @@ pub trait MakeTransport<Target, Request>: self::sealed::Sealed<Target, Request> 
     /// This is a **best effort** implementation. False positives are permitted.
     /// It is permitted for the service to return `Ready` from a `poll_ready`
     /// call and the next invocation of `make_transport` results in an error.
-    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::MakeError>>;
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::MakeError>>;
 
     /// Create and return a new transport asynchronously.
     fn make_transport(&mut self, target: Target) -> Self::Future;
@@ -210,7 +216,7 @@ where
     type MakeError = M::Error;
     type Future = M::Future;
 
-    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::MakeError>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::MakeError>> {
         Service::poll_ready(self, cx)
     }
 

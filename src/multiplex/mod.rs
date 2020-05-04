@@ -28,6 +28,7 @@ pub use self::server::Server;
 /// A convenience wrapper that lets you take separate transport and tag store types and use them as
 /// a single [`client::Transport`].
 #[pin_project]
+#[derive(Debug)]
 pub struct MultiplexTransport<T, S> {
     #[pin]
     transport: T,
@@ -48,16 +49,16 @@ where
 {
     type Error = <T as Sink<Request>>::Error;
 
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.project().transport.poll_ready(cx)
     }
     fn start_send(self: Pin<&mut Self>, item: Request) -> Result<(), Self::Error> {
         self.project().transport.start_send(item)
     }
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.project().transport.poll_flush(cx)
     }
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.project().transport.poll_close(cx)
     }
 }
@@ -67,7 +68,7 @@ where
     T: TryStream,
 {
     type Item = Result<<T as TryStream>::Ok, <T as TryStream>::Error>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.project().transport.try_poll_next(cx)
     }
 }

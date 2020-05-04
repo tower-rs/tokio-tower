@@ -17,6 +17,7 @@ use tower_service::Service;
 /// `Sink<SinkItem = Response>` and `Stream<Item = Request>` with the necessary bookkeeping to
 /// adhere to Tower's convenient `fn(Request) -> Future<Response>` API.
 #[pin_project]
+#[derive(Debug)]
 pub struct Server<T, S>
 where
     T: Sink<S::Response> + TryStream,
@@ -56,7 +57,7 @@ where
     <T as TryStream>::Error: fmt::Display,
     S::Error: fmt::Display,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Error::BrokenTransportRecv(ref se) => fmt::Display::fmt(se, f),
             Error::BrokenTransportSend(ref se) => fmt::Display::fmt(se, f),
@@ -73,7 +74,7 @@ where
     <T as TryStream>::Error: fmt::Debug,
     S::Error: fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Error::BrokenTransportRecv(ref se) => write!(f, "BrokenTransportRecv({:?})", se),
             Error::BrokenTransportSend(ref se) => write!(f, "BrokenTransportSend({:?})", se),
@@ -184,7 +185,7 @@ where
 {
     type Output = Result<(), Error<T, S>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let span = tracing::trace_span!("poll");
         let _guard = span.enter();
         tracing::trace!("poll");

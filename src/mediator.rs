@@ -37,7 +37,7 @@ struct Mediator<T> {
 }
 
 impl<T> fmt::Debug for Mediator<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Mediator")
             .field("tx_task", &self.tx_task)
             .field("rx_task", &self.rx_task)
@@ -48,7 +48,7 @@ impl<T> fmt::Debug for Mediator<T> {
 pub(crate) struct Receiver<T>(Arc<Mediator<T>>);
 
 impl<T> fmt::Debug for Receiver<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Receiver").field(&self.0).finish()
     }
 }
@@ -59,7 +59,7 @@ pub(crate) struct Sender<T> {
 }
 
 impl<T> fmt::Debug for Sender<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Sender")
             .field("inner", &self.inner)
             .field("checked_ready", &self.checked_ready)
@@ -111,7 +111,7 @@ impl<T> Sender<T> {
     /// Returns true if there is a free slot for a client request.
     ///
     /// This method errors if the receiver has disconnected.
-    pub(crate) fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), ()>> {
+    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>> {
         // register in case we can't send
         self.inner.tx_task.register(cx.waker());
         match self.inner.value.swap(CellValue::None) {
@@ -170,7 +170,7 @@ impl<T> Receiver<T> {
     /// Attempts to receive a value sent by the client.
     ///
     /// `Ready(None)` is returned if the client has disconnected.
-    pub(crate) fn try_recv(&mut self, cx: &mut Context) -> Poll<Option<T>> {
+    pub(crate) fn try_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<T>> {
         self.0.rx_task.register(cx.waker());
         match self.0.value.swap(CellValue::None) {
             CellValue::Some(v) => {

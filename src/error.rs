@@ -33,7 +33,7 @@ where
     <T as Sink<I>>::Error: fmt::Display,
     <T as TryStream>::Error: fmt::Display,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Error::BrokenTransportSend(ref se) => fmt::Display::fmt(se, f),
             Error::BrokenTransportRecv(Some(ref se)) => fmt::Display::fmt(se, f),
@@ -51,7 +51,7 @@ where
     <T as Sink<I>>::Error: fmt::Debug,
     <T as TryStream>::Error: fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Error::BrokenTransportSend(ref se) => write!(f, "BrokenTransportSend({:?})", se),
             Error::BrokenTransportRecv(Some(ref se)) => write!(f, "BrokenTransportRecv({:?})", se),

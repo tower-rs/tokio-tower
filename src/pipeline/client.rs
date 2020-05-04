@@ -24,6 +24,17 @@ pub struct Maker<NT, Request> {
     _req: PhantomData<fn(Request)>,
 }
 
+impl<NT, Request> fmt::Debug for Maker<NT, Request>
+where
+    NT: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Maker")
+            .field("t_maker", &self.t_maker)
+            .finish()
+    }
+}
+
 impl<NT, Request> Maker<NT, Request> {
     /// Make a new `Client` factory that uses the given `MakeTransport` factory.
     pub fn new(t: NT) -> Self {
@@ -68,7 +79,7 @@ where
         Box::pin(async move { Ok(Client::new(maker.await.map_err(SpawnError::Inner)?)) })
     }
 
-    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.t_maker.poll_ready(cx).map_err(SpawnError::Inner)
     }
 }
@@ -101,7 +112,7 @@ impl<T, E, Request> fmt::Debug for Client<T, E, Request>
 where
     T: Sink<Request> + TryStream,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
             .field("mediator", &self.mediator)
             .field("in_flight", &self.in_flight)
@@ -193,7 +204,7 @@ where
 {
     type Output = Result<(), E>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // go through the deref so we can do partial borrows
         let this = self.project();
 
@@ -341,7 +352,7 @@ where
     type Error = E;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, cx: &mut Context) -> Poll<Result<(), E>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), E>> {
         Poll::Ready(ready!(self.mediator.poll_ready(cx)).map_err(|_| E::from(Error::ClientDropped)))
     }
 
@@ -383,7 +394,7 @@ impl<T> fmt::Display for SpawnError<T>
 where
     T: fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             SpawnError::SpawnFailed => write!(f, "error spawning multiplex client"),
             SpawnError::Inner(ref te) => {
