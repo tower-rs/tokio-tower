@@ -232,3 +232,20 @@ mod sealed {
 
 pub mod multiplex;
 pub mod pipeline;
+
+/// impl Future.
+///
+/// https://github.com/rust-lang/rust/issues/65863
+#[cfg(doc)]
+pub struct DocFuture<O>(std::marker::PhantomData<O>);
+
+#[cfg(doc)]
+impl<O> std::future::Future for DocFuture<O> {
+    type Output = O;
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        unreachable!()
+    }
+}
