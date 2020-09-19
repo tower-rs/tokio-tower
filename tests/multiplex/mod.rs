@@ -3,7 +3,6 @@ use async_bincode::*;
 use futures_util::pin_mut;
 use slab::Slab;
 use std::pin::Pin;
-use tokio;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
 use tower_service::Service;

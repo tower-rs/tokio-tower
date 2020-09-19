@@ -1,7 +1,6 @@
 use crate::{ready, unwrap, EchoService, PanicError, Request, Response};
 use async_bincode::*;
 use futures_util::pin_mut;
-use tokio;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tower::pipeline::{Client, Server};
 use tower_service::Service;
