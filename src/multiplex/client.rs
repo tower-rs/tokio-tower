@@ -105,7 +105,7 @@ where
     }
 }
 
-impl<NT, Request> tower_load::Load for Maker<NT, Request> {
+impl<NT, Request> tower::load::Load for Maker<NT, Request> {
     type Metric = u8;
 
     fn load(&self) -> Self::Metric {
@@ -417,7 +417,7 @@ where
     }
 }
 
-impl<T, E, Request> tower_load::Load for Client<T, E, Request>
+impl<T, E, Request> tower::load::Load for Client<T, E, Request>
 where
     T: Sink<Request> + TryStream,
 {

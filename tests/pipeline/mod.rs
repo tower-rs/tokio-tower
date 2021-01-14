@@ -10,7 +10,7 @@ mod client;
 
 #[tokio::test]
 async fn integration() {
-    let mut rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
@@ -38,7 +38,7 @@ async fn integration() {
 
 #[tokio::test]
 async fn racing_close() {
-    let mut rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect
