@@ -35,7 +35,7 @@ pin-project = "1.0"
 tokio = { version = "1.0", features = [ "full" ] }
 serde = "1.0"
 serde_derive = "1.0"
-async-bincode = { version = "0.5", git = "https://github.com/taiki-e/async-bincode", branch = "deps" }
+async-bincode = "0.6"
 slab = "0.4"
 tokio-test = "0.4"
 tower-test = "0.4"
