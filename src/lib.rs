@@ -40,6 +40,7 @@
 //! the client helper as `Client` in the protocol module you're working with (e.g.,
 //! [`pipeline::Client`]), and the server helper as `Server` in the same place.
 //!
+/* TODO: https://github.com/tokio-rs/tokio/pull/3105
 //! # Example
 //! ```rust
 //! # use std::pin::Pin;
@@ -133,6 +134,7 @@
 //! }
 //!
 //! ```
+*/
 #![warn(
     missing_docs,
     missing_debug_implementations,
