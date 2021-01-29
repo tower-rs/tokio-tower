@@ -7,7 +7,7 @@ use tower_service::Service;
 
 #[tokio::test]
 async fn it_works() {
-    let mut rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rx = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = rx.local_addr().unwrap();
 
     // connect

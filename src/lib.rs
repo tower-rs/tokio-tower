@@ -62,20 +62,20 @@
 //! /// In this echo server example, requests and responses are both of type `T`, but for "real"
 //! /// services, the two types are usually different.
 //! struct ChannelTransport<T> {
-//!     rcv: mpsc::Receiver<T>,
-//!     snd: mpsc::Sender<T>,
+//!     rcv: mpsc::UnboundedReceiver<T>,
+//!     snd: mpsc::UnboundedSender<T>,
 //! }
 //!
 //! impl<T: Debug> futures_sink::Sink<T> for ChannelTransport<T> {
 //!     type Error = StdError;
 //!
 //!     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-//!         self.snd.poll_ready(cx).map_err(|e| e.into())
+//!         Poll::Ready(Ok(()))
 //!     }
 //!
 //!     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-//!         // unwrap ok because of poll_ready()
-//!         self.snd.try_send(item).unwrap();
+//!         // use map_err because `T` contained in `mpsc::SendError` may not be `Send + Sync`.
+//!         self.snd.send(item).map_err(|e| e.to_string())?;
 //!         Ok(())
 //!     }
 //!
@@ -116,8 +116,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let (s1, r1) = mpsc::channel(2);
-//!     let (s2, r2) = mpsc::channel(2);
+//!     let (s1, r1) = mpsc::unbounded_channel();
+//!     let (s2, r2) = mpsc::unbounded_channel();
 //!     let pair1 = ChannelTransport{snd: s1, rcv: r2};
 //!     let pair2 = ChannelTransport{snd: s2, rcv: r1};
 //!
