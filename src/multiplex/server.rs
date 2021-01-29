@@ -1,13 +1,10 @@
-use futures_core::{
-    future::Future,
-    ready,
-    stream::TryStream,
-    task::{Context, Poll},
-};
+use futures_core::{ready, stream::TryStream};
 use futures_sink::Sink;
 use futures_util::stream::FuturesUnordered;
 use pin_project::pin_project;
+use std::future::Future;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::{error, fmt};
 use tower_service::Service;
 

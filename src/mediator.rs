@@ -1,9 +1,8 @@
 use crossbeam::atomic::AtomicCell;
-use futures_core::task::Poll;
 use futures_util::task;
 use std::fmt;
 use std::sync::Arc;
-use std::task::Context;
+use std::task::{Context, Poll};
 
 #[derive(Debug)]
 enum CellValue<T> {
