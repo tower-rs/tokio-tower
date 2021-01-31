@@ -143,7 +143,7 @@ impl<T> Sender<T> {
             return Err(TrySendError::Pending(t));
         }
 
-        // we're suppposed to _know_ that there is a slot here,
+        // we're supposed to _know_ that there is a slot here,
         // so no need to do a tx_task.register.
         match self.inner.value.swap(CellValue::Some(t)) {
             CellValue::None => {}

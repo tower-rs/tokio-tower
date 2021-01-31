@@ -134,7 +134,7 @@ where
     ///
     /// Requests are passed to `Service::call` as they arrive, and responses are written back to
     /// the underlying `transport` in the order that the requests arrive. If a later request
-    /// completes before an earlier request, its result will be buffered until all preceeding
+    /// completes before an earlier request, its result will be buffered until all preceding
     /// requests have been sent.
     pub fn new(transport: T, service: S) -> Self {
         Server {
