@@ -3,7 +3,7 @@
 //! them. This allows the server to process requests out-of-order, and eliminates the
 //! application-level head-of-line blocking that pipelined protocols suffer from. Example
 //! multiplexed protocols include SSH, HTTP/2, and AMQP. [This
-//! page](http://250bpm.com/multiplexing) has some further details about how multiplexing protocols
+//! page](https://250bpm.com/blog:18/) has some further details about how multiplexing protocols
 //! operate.
 //!
 //! Note: multiplexing with the max number of in-flight requests set to 1 implies that for each
