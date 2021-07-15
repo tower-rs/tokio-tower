@@ -405,10 +405,10 @@ impl<T> error::Error for SpawnError<T>
 where
     T: error::Error,
 {
-    fn cause(&self) -> Option<&dyn error::Error> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
             SpawnError::SpawnFailed => None,
-            SpawnError::Inner(ref te) => Some(te),
+            SpawnError::Inner(ref te) => te.source(),
         }
     }
 

@@ -69,10 +69,10 @@ where
     <T as Sink<I>>::Error: error::Error,
     <T as TryStream>::Error: error::Error,
 {
-    fn cause(&self) -> Option<&dyn error::Error> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
-            Error::BrokenTransportSend(ref se) => Some(se),
-            Error::BrokenTransportRecv(Some(ref se)) => Some(se),
+            Error::BrokenTransportSend(ref se) => se.source(),
+            Error::BrokenTransportRecv(Some(ref se)) => se.source(),
             _ => None,
         }
     }

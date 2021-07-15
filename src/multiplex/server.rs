@@ -88,11 +88,11 @@ where
     <T as TryStream>::Error: error::Error,
     S::Error: error::Error,
 {
-    fn cause(&self) -> Option<&dyn error::Error> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
-            Error::BrokenTransportSend(ref se) => Some(se),
-            Error::BrokenTransportRecv(ref se) => Some(se),
-            Error::Service(ref se) => Some(se),
+            Error::BrokenTransportSend(ref se) => se.source(),
+            Error::BrokenTransportRecv(ref se) => se.source(),
+            Error::Service(ref se) => se.source(),
         }
     }
 
