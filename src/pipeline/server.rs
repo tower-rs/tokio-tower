@@ -56,9 +56,13 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Error::BrokenTransportRecv(ref se) => fmt::Display::fmt(se, f),
-            Error::BrokenTransportSend(ref se) => fmt::Display::fmt(se, f),
-            Error::Service(ref se) => fmt::Display::fmt(se, f),
+            Error::BrokenTransportRecv(_) => {
+                f.pad("underlying transport failed to produce a request")
+            }
+            Error::BrokenTransportSend(_) => {
+                f.pad("underlying transport failed while attempting to send a response")
+            }
+            Error::Service(_) => f.pad("underlying service failed to process a request"),
         }
     }
 }
@@ -84,24 +88,15 @@ impl<T, S> error::Error for Error<T, S>
 where
     T: Sink<S::Response> + TryStream,
     S: Service<<T as TryStream>::Ok>,
-    <T as Sink<S::Response>>::Error: error::Error,
-    <T as TryStream>::Error: error::Error,
-    S::Error: error::Error,
+    <T as Sink<S::Response>>::Error: error::Error + 'static,
+    <T as TryStream>::Error: error::Error + 'static,
+    S::Error: error::Error + 'static,
 {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
-            Error::BrokenTransportSend(ref se) => se.source(),
-            Error::BrokenTransportRecv(ref se) => se.source(),
-            Error::Service(ref se) => se.source(),
-        }
-    }
-
-    #[allow(deprecated)]
-    fn description(&self) -> &str {
-        match *self {
-            Error::BrokenTransportSend(ref se) => se.description(),
-            Error::BrokenTransportRecv(ref se) => se.description(),
-            Error::Service(ref se) => se.description(),
+            Error::BrokenTransportSend(ref se) => Some(se),
+            Error::BrokenTransportRecv(ref se) => Some(se),
+            Error::Service(ref se) => Some(se),
         }
     }
 }

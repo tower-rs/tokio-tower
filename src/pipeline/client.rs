@@ -393,26 +393,20 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            SpawnError::SpawnFailed => write!(f, "error spawning multiplex client"),
-            SpawnError::Inner(ref te) => {
-                write!(f, "error making new multiplex transport: {:?}", te)
-            }
+            SpawnError::SpawnFailed => f.pad("error spawning multiplex client"),
+            SpawnError::Inner(_) => f.pad("error making new multiplex transport"),
         }
     }
 }
 
 impl<T> error::Error for SpawnError<T>
 where
-    T: error::Error,
+    T: error::Error + 'static,
 {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
             SpawnError::SpawnFailed => None,
-            SpawnError::Inner(ref te) => te.source(),
+            SpawnError::Inner(ref te) => Some(te),
         }
-    }
-
-    fn description(&self) -> &str {
-        "error creating new multiplex client"
     }
 }
