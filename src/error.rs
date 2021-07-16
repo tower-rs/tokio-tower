@@ -35,8 +35,10 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Error::BrokenTransportSend(ref se) => fmt::Display::fmt(se, f),
-            Error::BrokenTransportRecv(Some(ref se)) => fmt::Display::fmt(se, f),
+            Error::BrokenTransportSend(_) => f.pad("underlying transport failed to send a request"),
+            Error::BrokenTransportRecv(Some(_)) => {
+                f.pad("underlying transport failed while attempting to receive a response")
+            }
             Error::BrokenTransportRecv(None) => f.pad("transport closed with in-flight requests"),
             Error::TransportFull => f.pad("no more in-flight requests allowed"),
             Error::ClientDropped => f.pad("Client was dropped"),
@@ -66,26 +68,14 @@ where
 impl<T, I> error::Error for Error<T, I>
 where
     T: Sink<I> + TryStream,
-    <T as Sink<I>>::Error: error::Error,
-    <T as TryStream>::Error: error::Error,
+    <T as Sink<I>>::Error: error::Error + 'static,
+    <T as TryStream>::Error: error::Error + 'static,
 {
-    fn cause(&self) -> Option<&dyn error::Error> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
             Error::BrokenTransportSend(ref se) => Some(se),
             Error::BrokenTransportRecv(Some(ref se)) => Some(se),
             _ => None,
-        }
-    }
-
-    #[allow(deprecated)]
-    fn description(&self) -> &str {
-        match *self {
-            Error::BrokenTransportSend(ref se) => se.description(),
-            Error::BrokenTransportRecv(Some(ref se)) => se.description(),
-            Error::BrokenTransportRecv(None) => "transport closed with in-flight requests",
-            Error::TransportFull => "no more in-flight requests allowed",
-            Error::ClientDropped => "Client was dropped",
-            Error::Desynchronized => "server sent a response the client did not expect",
         }
     }
 }
