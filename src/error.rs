@@ -17,7 +17,7 @@ where
 
     /// Attempted to issue a `call` when no more requests can be in flight.
     ///
-    /// See [`tower_service::Service::poll_ready`] and [`Client::with_limit`].
+    /// See [`tower_service::Service::poll_ready`].
     TransportFull,
 
     /// Attempted to issue a `call`, but the underlying transport has been closed.
