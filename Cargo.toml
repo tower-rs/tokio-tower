@@ -33,9 +33,14 @@ pin-project = "1.0"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = [ "full" ] }
+tower = { version = "0.4", features = ["full"] }
 serde = "1.0"
 serde_derive = "1.0"
 async-bincode = "0.6"
 slab = "0.4"
 tokio-test = "0.4"
 tower-test = "0.4"
+anyhow = "1.0"
+tracing-subscriber = "0.3"
+futures = "0.3"
+rand = "0.8"
