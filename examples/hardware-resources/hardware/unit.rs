@@ -4,16 +4,27 @@ use anyhow::Result;
 use futures::channel::oneshot;
 use rand::Rng;
 use tokio::sync::mpsc;
-use tower::Service;
+use tower::{steer::Picker, Service};
 use tracing::{error, info};
 
 use crate::message;
 
 use super::shared::{HardwareError, HardwareFuture, HardwareResponse, HardwareResult};
 
+pub struct HardwarePicker;
+impl Picker<HardwareUnit, message::HardwareRequest> for HardwarePicker {
+    fn pick(&mut self, request: &message::HardwareRequest, services: &[HardwareUnit]) -> usize {
+        services
+            .iter()
+            .position(|unit| unit.id == request.id)
+            .expect("No such id")
+    }
+}
+
 // Simulates some hardware unit.
 pub struct HardwareUnit {
     requests: mpsc::UnboundedSender<WrappedRequest>,
+    pub(crate) id: usize,
 }
 
 // Simulated work.
@@ -26,7 +37,7 @@ async fn use_hardware(request: message::Request) -> HardwareResult {
 }
 
 impl HardwareUnit {
-    pub async fn new(id: usize) -> Result<Self> {
+    pub fn new(id: usize) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
@@ -44,7 +55,7 @@ impl HardwareUnit {
             error!("No more requests");
         });
 
-        Ok(Self { requests: tx })
+        Self { requests: tx, id }
     }
 }
 
@@ -54,7 +65,7 @@ struct WrappedRequest {
     response_channel: oneshot::Sender<HardwareResult>,
 }
 
-impl Service<message::Request> for HardwareUnit {
+impl Service<message::HardwareRequest> for HardwareUnit {
     type Response = HardwareResponse;
     type Error = HardwareError;
     type Future = HardwareFuture;
@@ -63,11 +74,14 @@ impl Service<message::Request> for HardwareUnit {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: message::Request) -> Self::Future {
+    fn call(&mut self, request: message::HardwareRequest) -> Self::Future {
         let (tx, rx) = oneshot::channel();
 
+        let message::HardwareRequest { id, inner } = request;
+        assert!(id == self.id);
+
         let res = self.requests.send(WrappedRequest {
-            request,
+            request: inner,
             response_channel: tx,
         });
 

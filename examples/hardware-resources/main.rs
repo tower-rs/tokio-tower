@@ -5,12 +5,15 @@ use std::{net::SocketAddr, time::Duration};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tower::pipeline;
 use tower::{
-    balance::p2c::Balance, buffer::Buffer, discover::ServiceList, util::BoxService, Service,
-    ServiceBuilder, ServiceExt,
+    balance::p2c::Balance, buffer::Buffer, discover::ServiceList, filter::Filter, steer::Steer,
+    util::BoxService, Service, ServiceBuilder, ServiceExt,
 };
 use tracing::{error, info};
 
-use crate::hardware::manager::HardwareManager;
+use crate::{
+    hardware::unit::{HardwarePicker, HardwareUnit},
+    message::HardwareRequest,
+};
 
 mod hardware;
 mod message;
@@ -29,8 +32,29 @@ async fn run_server() -> Result<SocketAddr> {
 
     let local_addr = tcp.local_addr()?;
 
+    // These are the hardware units the server offers for use.
+    let hw_units = vec![
+        HardwareUnit::new(0),
+        HardwareUnit::new(1),
+        HardwareUnit::new(2),
+    ];
+
+    // We use [Steer] in order to route the request to the correct hardware unit.
+    let hw_manager = Steer::new(hw_units, HardwarePicker);
+
+    // [Steer] is not fallible.
+    // But users may request hardware the server does not have.
+    // We can place a [Filter] in front of any service to make the request fallible.
+    let hw_manager = Filter::new(hw_manager, |request: HardwareRequest| {
+        if request.id < 3 {
+            Ok(request)
+        } else {
+            Err(anyhow::anyhow!("No such hardware unit"))
+        }
+    });
+
     // The buffer allows cloning handles to the service.
-    let hw_manager = Buffer::new(HardwareManager::new(3).await?, 1024);
+    let hw_manager = Buffer::new(hw_manager, 1024);
 
     tokio::spawn(async move {
         let hw_manager_handle = hw_manager.clone();
@@ -46,6 +70,10 @@ async fn run_server() -> Result<SocketAddr> {
 
                 match server.await {
                     Ok(()) => info!("Server stopped"),
+                    // TODO: If we encounter an issue (e.g. user asks for invalid hardware id)
+                    // the server stops here.
+                    //
+                    // How do we propagate the issue back to the user, but keep the server running?
                     Err(e) => error!("Server stopped with an issue: {:?}", e),
                 }
             });
