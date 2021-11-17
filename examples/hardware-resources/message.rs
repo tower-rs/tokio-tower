@@ -1,6 +1,20 @@
+use serde_derive::{Deserialize, Serialize};
 use std::fmt::Display;
 
-use serde_derive::{Deserialize, Serialize};
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HardwareRequest {
+    pub(crate) id: usize,
+    pub(crate) inner: Request,
+}
+
+impl HardwareRequest {
+    pub fn new(id: usize, message: String) -> Self {
+        Self {
+            id,
+            inner: Request::new(message),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
