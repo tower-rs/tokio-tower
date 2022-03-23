@@ -37,11 +37,10 @@ pub trait TagStore<Request, Response> {
 
 /// A store used to track pending requests.
 ///
-/// Each request that is sent will get its pending type representation
-/// passed into `sent` and when the client has received the completed
-/// request it will provide that tag for the pending store to look up.
-/// This allows the ability to customize the data structure used to track
-/// in-flight requests.
+/// Each request that is `sent` is passed the local state used to track
+/// each pending request, and is expected to be able to recall that state
+/// through `completed` when a response later comes in with the same tag as
+/// the original request.
 pub trait PendingStore<T, Request>
 where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
@@ -51,19 +50,31 @@ where
 
     /// Retrive the pending request associated with this tag.
     ///
-    /// Returning `Ok(None)` will indicate that the pending request could not
+    /// `Ok(None)` indicates that the pending request could not
     /// be found in the pending store and for the client future to continue
     /// processing other responses. If you would like to terminate the client
     /// on a pending tag that doesn't exist the `Error::Desynchronized` error
     /// can be returned.
+    ///
+    /// This method should return `Ok(Some(p))` where `p` is the `Pending`
+    /// that was passed to `sent` with the tag. Implementors can choose
+    /// to ignore a given response, such as to support request cancellation,
+    /// by returning `Ok(None)` for a tag -- in that case, the `Client` will
+    /// drop the response and return `Error::Cancelled` to the waiting requestor.
+    ///
+    /// if `tag` is not recognized as belonging to an in-flight request, implementors
+    /// are encouraged to return `Error::Desynchronized`.
     fn completed(
         self: Pin<&mut Self>,
-        res: T::Tag,
+        tag: T::Tag,
     ) -> Result<Option<Pending<T::Tag, T::Ok>>, Error<T, Request>>;
 }
 
 /// A [`PendingStore`] implementation that uses a [`VecDeque`]
 /// to store pending requests.
+///
+/// On in-flight request mismatches this implementation will return
+/// `Error::Desynchronized`.
 #[pin_project]
 pub struct VecDequePendingStore<T, Request>
 where
@@ -89,7 +100,6 @@ impl<T, Request> fmt::Debug for VecDequePendingStore<T, Request>
 where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
     T::Tag: fmt::Debug,
-    T::Ok: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VecDequePendingStore")
@@ -227,8 +237,7 @@ where
 
 impl<T, E, Request, P> fmt::Debug for Client<T, E, Request, P>
 where
-    T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok>,
-    P: PendingStore<T, Request>,
+    T: Sink<Request> + TryStream,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
@@ -240,7 +249,7 @@ where
 
 // ===== Pending =====
 
-/// A pending response used to track in-flight requests.
+/// A type used to track in-flight requests.
 ///
 /// Each pending response contains an associated `Tag` that is provided
 /// from the `TagStore` used to uniquely identify a request/response pair.
@@ -254,11 +263,6 @@ impl<Tag, Response> Pending<Tag, Response> {
     /// Get the tag associated with this pending request.
     pub fn tag(&self) -> &Tag {
         &self.tag
-    }
-
-    /// Get the span associated with this pending request.
-    pub fn span(&self) -> &tracing::Span {
-        &self.span
     }
 }
 
@@ -281,8 +285,8 @@ where
 ///
 /// # Defaults
 ///
-/// By default this builder only requires a transport and sets a default pending store and
-/// error handler. The default pending store is just a [`VecDeque`] and the default
+/// By default this builder only requires a transport and sets a default [`PendingStore`]
+/// and error handler. The default pending store is just a [`VecDeque`] and the default
 /// error handler is just an empty closure.
 pub struct Builder<T, E, Request, P = VecDequePendingStore<T, Request>> {
     transport: T,
@@ -310,7 +314,7 @@ where
         }
     }
 
-    /// Set the provided pending store.
+    /// Set the provided [`PendingStore`].
     pub fn pending_store<P2>(self, pending_store: P2) -> Builder<T, E, Request, P2> {
         Builder {
             pending_store,
@@ -321,6 +325,8 @@ where
     }
 
     /// Set the provided service error handler.
+    ///
+    /// If the `Client` errors, its error is passed to `on_service_error`.
     pub fn on_service_error<F>(self, on_service_error: F) -> Builder<T, E, Request, P>
     where
         F: FnOnce(E) + Send + 'static,
@@ -545,14 +551,14 @@ where
                     // keeping a HashMap around, and is _usually_ fast as long as the requests
                     // that have been pending the longest are most likely to complete next.
                     let id = transport.as_mut().finish_tag(&r);
-                    let pending = match pending.as_mut().completed(id)? {
-                        Some(pending) => pending,
-                        None => {
-                            tracing::trace!(
-                                "response arrived but no associated pending tag; ignoring response"
-                            );
-                            continue;
-                        }
+
+                    let pending = if let Some(pending) = pending.as_mut().completed(id)? {
+                        pending
+                    } else {
+                        tracing::trace!(
+                            "response arrived but no associated pending tag; ignoring response"
+                        );
+                        continue;
                     };
 
                     tracing::trace!(parent: &pending.span, "response arrived; forwarding");
