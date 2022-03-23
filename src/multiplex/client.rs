@@ -280,6 +280,9 @@ where
 
 // ===== Builder =====
 
+/// The default service error handler.
+pub type DefaultOnServiceError<E> = Box<dyn FnOnce(E) + Send>;
+
 /// Builder for [`Client`] this is used to configure the transport, pending store
 /// and service_handler.
 ///
@@ -288,14 +291,20 @@ where
 /// By default this builder only requires a transport and sets a default [`PendingStore`]
 /// and error handler. The default pending store is just a [`VecDeque`] and the default
 /// error handler is just an empty closure.
-pub struct Builder<T, E, Request, P = VecDequePendingStore<T, Request>> {
+pub struct Builder<
+    T,
+    E,
+    Request,
+    P = VecDequePendingStore<T, Request>,
+    F = DefaultOnServiceError<E>,
+> {
     transport: T,
-    on_service_error: Box<dyn FnOnce(E) + Send>,
+    on_service_error: F,
     pending_store: P,
     _pd: PhantomData<fn(Request, E)>,
 }
 
-impl<T, E, Request, P> Builder<T, E, Request, P>
+impl<T, E, Request, F, P> Builder<T, E, Request, P, F>
 where
     T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok> + Send + 'static,
     P: PendingStore<T, Request> + Send + 'static,
@@ -304,6 +313,7 @@ where
     Request: 'static + Send,
     T::Ok: 'static + Send,
     T::Tag: Send,
+    F: FnOnce(E) + Send + 'static,
 {
     fn new(transport: T) -> Builder<T, E, Request, VecDequePendingStore<T, Request>> {
         Builder {
@@ -315,7 +325,7 @@ where
     }
 
     /// Set the provided [`PendingStore`].
-    pub fn pending_store<P2>(self, pending_store: P2) -> Builder<T, E, Request, P2> {
+    pub fn pending_store<P2>(self, pending_store: P2) -> Builder<T, E, Request, P2, F> {
         Builder {
             pending_store,
             on_service_error: self.on_service_error,
@@ -327,12 +337,12 @@ where
     /// Set the provided service error handler.
     ///
     /// If the `Client` errors, its error is passed to `on_service_error`.
-    pub fn on_service_error<F>(self, on_service_error: F) -> Builder<T, E, Request, P>
+    pub fn on_service_error<F2>(self, on_service_error: F2) -> Builder<T, E, Request, P, F2>
     where
         F: FnOnce(E) + Send + 'static,
     {
         Builder {
-            on_service_error: Box::new(on_service_error),
+            on_service_error,
             pending_store: self.pending_store,
             transport: self.transport,
             _pd: PhantomData,
