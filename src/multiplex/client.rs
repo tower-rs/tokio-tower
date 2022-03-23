@@ -50,17 +50,11 @@ where
 
     /// Retrive the pending request associated with this tag.
     ///
-    /// `Ok(None)` indicates that the pending request could not
-    /// be found in the pending store and for the client future to continue
-    /// processing other responses. If you would like to terminate the client
-    /// on a pending tag that doesn't exist the `Error::Desynchronized` error
-    /// can be returned.
-    ///
     /// This method should return `Ok(Some(p))` where `p` is the `Pending`
     /// that was passed to `sent` with the tag. Implementors can choose
     /// to ignore a given response, such as to support request cancellation,
-    /// by returning `Ok(None)` for a tag -- in that case, the `Client` will
-    /// drop the response and return `Error::Cancelled` to the waiting requestor.
+    /// by returning `Ok(None)` for a tag and dropping the corresponding
+    /// `Pending` type which will return a `Error::Cancelled` to the requestor.
     ///
     /// if `tag` is not recognized as belonging to an in-flight request, implementors
     /// are encouraged to return `Error::Desynchronized`.
