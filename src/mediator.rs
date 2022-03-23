@@ -21,11 +21,7 @@ enum CellValue<T> {
 
 impl<T> CellValue<T> {
     fn is_none(&self) -> bool {
-        if let CellValue::None = *self {
-            true
-        } else {
-            false
-        }
+        matches!(self, CellValue::None)
     }
 }
 
