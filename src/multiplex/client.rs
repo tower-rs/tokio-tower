@@ -634,7 +634,7 @@ where
                         tracing::trace!(parent: &r.span, "response returned");
                         Ok(r.response)
                     }
-                    Err(_) => Err(E::from(Error::ClientDropped)),
+                    Err(_) => Err(E::from(Error::Cancelled)),
                 },
                 Err(TrySendError::Pending(_)) => Err(E::from(Error::TransportFull)),
                 Err(TrySendError::Closed(_)) => Err(E::from(Error::ClientDropped)),
