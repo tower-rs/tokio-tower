@@ -46,7 +46,7 @@ where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
 {
     /// Store the provided pending request.
-    fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>);
+    fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>, transport: Pin<&mut T>);
 
     /// Retrive the pending request associated with this tag.
     ///
@@ -61,6 +61,7 @@ where
     fn completed(
         self: Pin<&mut Self>,
         tag: T::Tag,
+        transport: Pin<&mut T>,
     ) -> Result<Option<Pending<T::Tag, T::Ok>>, Error<T, Request>>;
 }
 
@@ -106,7 +107,7 @@ impl<T, Request> PendingStore<T, Request> for VecDequePendingStore<T, Request>
 where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
 {
-    fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>) {
+    fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>, _transport: Pin<&mut T>) {
         let this = self.project();
         this.pending.push_back(pending);
     }
@@ -114,6 +115,7 @@ where
     fn completed(
         self: Pin<&mut Self>,
         tag: T::Tag,
+        _transport: Pin<&mut T>,
     ) -> Result<Option<Pending<T::Tag, T::Ok>>, Error<T, Request>> {
         let id = tag;
         let this = self.project();
@@ -486,11 +488,14 @@ where
                         tracing::trace!("request sent");
                         drop(guard);
 
-                        pending.as_mut().sent(Pending {
-                            tag: id,
-                            tx: res,
-                            span: _span,
-                        });
+                        pending.as_mut().sent(
+                            Pending {
+                                tag: id,
+                                tx: res,
+                                span: _span,
+                            },
+                            transport.as_mut(),
+                        );
                         this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
 
                         // if we have run for a while without yielding, yield so we can make progress
@@ -550,13 +555,11 @@ where
                 .map_err(Error::from_stream_error)?
             {
                 Some(r) => {
-                    // find the appropriate response channel.
-                    // note that we do a _linear_ scan of the identifiers. this saves us from
-                    // keeping a HashMap around, and is _usually_ fast as long as the requests
-                    // that have been pending the longest are most likely to complete next.
                     let id = transport.as_mut().finish_tag(&r);
 
-                    let pending = if let Some(pending) = pending.as_mut().completed(id)? {
+                    let pending = if let Some(pending) =
+                        pending.as_mut().completed(id, transport.as_mut())?
+                    {
                         pending
                     } else {
                         tracing::trace!(
