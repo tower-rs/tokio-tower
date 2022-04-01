@@ -26,7 +26,7 @@ use tower_service::Service;
 /// safe to then give out `&mut` to the transport without `Pin`, as that might move the transport.
 pub trait TagStore<Request, Response> {
     /// The type used for tags.
-    type Tag: Eq;
+    type Tag;
 
     /// Assign a fresh tag to the given `Request`, and return that tag.
     fn assign_tag(self: Pin<&mut Self>, r: &mut Request) -> Self::Tag;
@@ -107,6 +107,7 @@ where
 impl<T, Request> PendingStore<T, Request> for VecDequePendingStore<T, Request>
 where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
+    T::Tag: Eq,
 {
     fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>, _transport: Pin<&mut T>) {
         let this = self.project();
@@ -397,7 +398,7 @@ where
     E: 'static + Send,
     Request: 'static + Send,
     T::Ok: 'static + Send,
-    T::Tag: Send,
+    T::Tag: Eq + Send,
 {
     /// Construct a new [`Client`] over the given `transport`.
     ///
