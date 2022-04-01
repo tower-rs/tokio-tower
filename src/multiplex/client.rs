@@ -37,7 +37,7 @@ pub trait TagStore<Request, Response> {
 
 /// A store used to track pending requests.
 ///
-/// Each request that is `sent` is passed the local state used to track
+/// Each request that is `sent` is passed to the local state used to track
 /// each pending request, and is expected to be able to recall that state
 /// through `completed` when a response later comes in with the same tag as
 /// the original request.
@@ -48,7 +48,7 @@ where
     /// Store the provided pending request.
     fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>, transport: Pin<&mut T>);
 
-    /// Retrive the pending request associated with this tag.
+    /// Retrieve the pending request associated with this tag.
     ///
     /// This method should return `Ok(Some(p))` where `p` is the [`Pending`]
     /// that was passed to `sent` with the tag. Implementors can choose
@@ -68,8 +68,9 @@ where
 /// A [`PendingStore`] implementation that uses a [`VecDeque`]
 /// to store pending requests.
 ///
-/// On in-flight request mismatches this implementation will return
-/// `Error::Desynchronized`.
+/// When the [`Client`] recives a response with a `Tag` that does not
+/// exist in the internal [`PendingStore`] this implementation will return
+/// an `Error::Desynchronized` error.
 #[pin_project]
 pub struct VecDequePendingStore<T, Request>
 where
@@ -198,7 +199,7 @@ where
         let maker = self.t_maker.make_transport(target);
         Box::pin(async move {
             let transport = maker.await.map_err(SpawnError::Inner)?;
-            Ok(Client::new(transport, P::default(), |_| {}))
+            Ok(Client::new_internal(transport, P::default(), |_| {}))
         })
     }
 
@@ -285,14 +286,14 @@ pub type DefaultOnServiceError<E> = Box<dyn FnOnce(E) + Send>;
 /// # Defaults
 ///
 /// By default this builder only requires a transport and sets a default [`PendingStore`]
-/// and error handler. The default pending store is just a [`VecDeque`] and the default
-/// error handler is just an empty closure.
+/// and error handler. The default pending store is a [`VecDeque`] and the default
+/// error handler is just a closure that silently drops all errors.
 pub struct Builder<
     T,
     E,
     Request,
-    P = VecDequePendingStore<T, Request>,
     F = DefaultOnServiceError<E>,
+    P = VecDequePendingStore<T, Request>,
 > {
     transport: T,
     on_service_error: F,
@@ -300,7 +301,7 @@ pub struct Builder<
     _pd: PhantomData<fn(Request, E)>,
 }
 
-impl<T, E, Request, F, P> Builder<T, E, Request, P, F>
+impl<T, E, Request, F, P> Builder<T, E, Request, F, P>
 where
     T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok> + Send + 'static,
     P: PendingStore<T, Request> + Send + 'static,
@@ -311,7 +312,9 @@ where
     T::Tag: Send,
     F: FnOnce(E) + Send + 'static,
 {
-    fn new(transport: T) -> Builder<T, E, Request, VecDequePendingStore<T, Request>> {
+    fn new(
+        transport: T,
+    ) -> Builder<T, E, Request, DefaultOnServiceError<E>, VecDequePendingStore<T, Request>> {
         Builder {
             transport,
             on_service_error: Box::new(|_| {}),
@@ -320,8 +323,8 @@ where
         }
     }
 
-    /// Set the provided [`PendingStore`].
-    pub fn pending_store<P2>(self, pending_store: P2) -> Builder<T, E, Request, P2, F> {
+    /// Set the constructed client's [`PendingStore`].
+    pub fn pending_store<P2>(self, pending_store: P2) -> Builder<T, E, Request, F, P2> {
         Builder {
             pending_store,
             on_service_error: self.on_service_error,
@@ -330,10 +333,11 @@ where
         }
     }
 
-    /// Set the provided service error handler.
+    /// Set the constructed client's service error handler.
     ///
-    /// If the `Client` errors, its error is passed to `on_service_error`.
-    pub fn on_service_error<F2>(self, on_service_error: F2) -> Builder<T, E, Request, P, F2>
+    /// If the [`Client`] encounters an error, it passes that error to `on_service_error`
+    /// before exiting.
+    pub fn on_service_error<F2>(self, on_service_error: F2) -> Builder<T, E, Request, F2, P>
     where
         F: FnOnce(E) + Send + 'static,
     {
@@ -347,11 +351,11 @@ where
 
     /// Build a client based on the configured items on the builder.
     pub fn build(self) -> Client<T, E, Request, P> {
-        Client::new(self.transport, self.pending_store, self.on_service_error)
+        Client::new_internal(self.transport, self.pending_store, self.on_service_error)
     }
 }
 
-impl<T, E, Request, P> fmt::Debug for Builder<T, E, Request, P>
+impl<T, E, Request, F, P> fmt::Debug for Builder<T, E, Request, F, P>
 where
     T: fmt::Debug,
     P: fmt::Debug,
@@ -395,9 +399,19 @@ where
     T::Ok: 'static + Send,
     T::Tag: Send,
 {
+    /// Construct a new [`Client`] over the given `transport`.
+    ///
+    /// If the Client errors, the error is dropped when `new` is used -- use `with_error_handler`
+    /// to handle such an error explicitly.
+    pub fn new(transport: T) -> Self {
+        Self::builder(transport).build()
+    }
+
     /// Create a new builder with the provided transport.
     pub fn builder(transport: T) -> Builder<T, E, Request> {
-        Builder::<_, _, _, VecDequePendingStore<T, Request>>::new(transport)
+        Builder::<_, _, _, DefaultOnServiceError<E>, VecDequePendingStore<T, Request>>::new(
+            transport,
+        )
     }
 }
 
@@ -411,7 +425,7 @@ where
     T::Ok: 'static + Send,
     T::Tag: Send,
 {
-    fn new<F>(transport: T, pending: P, on_service_error: F) -> Self
+    fn new_internal<F>(transport: T, pending: P, on_service_error: F) -> Self
     where
         F: FnOnce(E) + Send + 'static,
     {

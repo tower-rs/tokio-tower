@@ -16,7 +16,7 @@ where
     /// If `None`, the transport closed without error while there were pending requests.
     BrokenTransportRecv(Option<<T as TryStream>::Error>),
 
-    /// The internal pending data store has
+    /// The internal pending data store has dropped the pending response.
     Cancelled,
 
     /// Attempted to issue a `call` when no more requests can be in flight.
