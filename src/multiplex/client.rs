@@ -45,8 +45,8 @@ pub trait PendingStore<T, Request>
 where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
 {
-    /// Store the provided pending request.
-    fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>, transport: Pin<&mut T>);
+    /// Store the provided tag and pending request.
+    fn sent(self: Pin<&mut Self>, tag: T::Tag, pending: Pending<T::Ok>, transport: Pin<&mut T>);
 
     /// Retrieve the pending request associated with this tag.
     ///
@@ -62,7 +62,7 @@ where
         self: Pin<&mut Self>,
         tag: T::Tag,
         transport: Pin<&mut T>,
-    ) -> Result<Option<Pending<T::Tag, T::Ok>>, Error<T, Request>>;
+    ) -> Result<Option<Pending<T::Ok>>, Error<T, Request>>;
 }
 
 /// A [`PendingStore`] implementation that uses a [`VecDeque`]
@@ -76,7 +76,7 @@ pub struct VecDequePendingStore<T, Request>
 where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
 {
-    pending: VecDeque<Pending<T::Tag, T::Ok>>,
+    pending: VecDeque<(T::Tag, Pending<T::Ok>)>,
     _pd: PhantomData<fn((T, Request))>,
 }
 
@@ -109,23 +109,22 @@ where
     T: TryStream + Sink<Request> + TagStore<Request, T::Ok>,
     T::Tag: Eq,
 {
-    fn sent(self: Pin<&mut Self>, pending: Pending<T::Tag, T::Ok>, _transport: Pin<&mut T>) {
+    fn sent(self: Pin<&mut Self>, tag: T::Tag, pending: Pending<T::Ok>, _transport: Pin<&mut T>) {
         let this = self.project();
-        this.pending.push_back(pending);
+        this.pending.push_back((tag, pending));
     }
 
     fn completed(
         self: Pin<&mut Self>,
         tag: T::Tag,
         _transport: Pin<&mut T>,
-    ) -> Result<Option<Pending<T::Tag, T::Ok>>, Error<T, Request>> {
-        let id = tag;
+    ) -> Result<Option<Pending<T::Ok>>, Error<T, Request>> {
         let this = self.project();
 
         let pending = this
             .pending
             .iter()
-            .position(|&Pending { ref tag, .. }| tag == &id)
+            .position(|(t, _)| t == &tag)
             .ok_or(Error::Desynchronized)?;
 
         // this request just finished, which means it's _probably_ near the front
@@ -133,7 +132,7 @@ where
         // remove, we want to swap with something else that is close to the front.
         let response = this.pending.swap_remove_front(pending).unwrap();
 
-        Ok(response.into())
+        Ok(Some(response.1))
     }
 }
 
@@ -251,28 +250,14 @@ where
 ///
 /// Each pending response contains an associated `Tag` that is provided
 /// by the [`TagStore`], which is used to uniquely identify a request/response pair.
-pub struct Pending<Tag, Response> {
-    tag: Tag,
+pub struct Pending<Response> {
     tx: tokio::sync::oneshot::Sender<ClientResponse<Response>>,
     span: tracing::Span,
 }
 
-impl<Tag, Response> Pending<Tag, Response> {
-    /// Get the tag associated with this pending request.
-    pub fn tag(&self) -> &Tag {
-        &self.tag
-    }
-}
-
-impl<Tag, Response> fmt::Debug for Pending<Tag, Response>
-where
-    Tag: fmt::Debug,
-{
+impl<Response> fmt::Debug for Pending<Response> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Pending")
-            .field("tag", &self.tag)
-            .field("span", &self.span)
-            .finish()
+        f.debug_struct("Pending").field("span", &self.span).finish()
     }
 }
 
@@ -504,8 +489,8 @@ where
                         drop(guard);
 
                         pending.as_mut().sent(
+                            id,
                             Pending {
-                                tag: id,
                                 tx: res,
                                 span: _span,
                             },
