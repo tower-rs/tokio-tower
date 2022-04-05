@@ -1,3 +1,4 @@
+use super::Pending;
 use crate::mediator;
 use crate::mediator::TrySendError;
 use crate::wrappers::*;
@@ -244,23 +245,6 @@ where
     }
 }
 
-// ===== Pending =====
-
-/// A type used to track in-flight requests.
-///
-/// Each pending response contains an associated `Tag` that is provided
-/// by the [`TagStore`], which is used to uniquely identify a request/response pair.
-pub struct Pending<Response> {
-    tx: tokio::sync::oneshot::Sender<ClientResponse<Response>>,
-    span: tracing::Span,
-}
-
-impl<Response> fmt::Debug for Pending<Response> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Pending").field("span", &self.span).finish()
-    }
-}
-
 // ===== Builder =====
 
 /// The default service error handler.
@@ -298,7 +282,8 @@ where
     T::Tag: Send,
     F: FnOnce(E) + Send + 'static,
 {
-    fn new(
+    /// Construct a new [`Client`] over the given `transport`.
+    pub fn new(
         transport: T,
     ) -> Builder<T, E, Request, DefaultOnServiceError<E>, VecDequePendingStore<T, Request>> {
         Builder {
@@ -471,14 +456,10 @@ where
 
                 // send more requests if we have them
                 match this.mediator.try_recv(cx) {
-                    Poll::Ready(Some(ClientRequest {
-                        mut req,
-                        span: _span,
-                        res,
-                    })) => {
+                    Poll::Ready(Some(ClientRequest { mut req, span, res })) => {
                         let id = transport.as_mut().assign_tag(&mut req);
 
-                        let guard = _span.enter();
+                        let guard = span.enter();
                         tracing::trace!("request received by worker; sending to Sink");
 
                         transport
@@ -488,15 +469,12 @@ where
                         tracing::trace!("request sent");
                         drop(guard);
 
+                        this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
                         pending.as_mut().sent(
                             id,
-                            Pending {
-                                tx: res,
-                                span: _span,
-                            },
+                            Pending::new(res, span, this.in_flight.clone()),
                             transport.as_mut(),
                         );
-                        this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
 
                         // if we have run for a while without yielding, yield so we can make progress
                         i += 1;
@@ -568,16 +546,9 @@ where
                         continue;
                     };
 
-                    tracing::trace!(parent: &pending.span, "response arrived; forwarding");
+                    tracing::trace!(parent: pending.span(), "response arrived; forwarding");
 
-                    // ignore send failures
-                    // the client may just no longer care about the response
-                    let sender = pending.tx;
-                    let _ = sender.send(ClientResponse {
-                        response: r,
-                        span: pending.span,
-                    });
-                    this.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
+                    pending.send(r);
                 }
                 None => {
                     // the transport terminated while we were waiting for a response!
