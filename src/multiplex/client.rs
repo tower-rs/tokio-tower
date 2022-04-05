@@ -51,13 +51,13 @@ where
     /// Retrieve the pending request associated with this tag.
     ///
     /// This method should return `Ok(Some(p))` where `p` is the [`Pending`]
-    /// that was passed to `sent` with the tag. Implementors can choose
+    /// that was passed to `sent` with `tag`. Implementors can choose
     /// to ignore a given response, such as to support request cancellation,
     /// by returning `Ok(None)` for a tag and dropping the corresponding
     /// `Pending` type. Doing so will make the original request future resolve as `Err(Error::Cancelled)`.
     ///
     /// If `tag` is not recognized as belonging to an in-flight request, implementors
-    /// should return `Error::Desynchronized`.
+    /// should return `Err(Error::Desynchronized)`.
     fn completed(
         self: Pin<&mut Self>,
         tag: T::Tag,
