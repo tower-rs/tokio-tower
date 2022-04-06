@@ -10,7 +10,6 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::{atomic, Arc};
 use std::task::{Context, Poll};
 use std::{error, fmt};
 use tower_service::Service;
@@ -63,6 +62,9 @@ where
         tag: T::Tag,
         transport: Pin<&mut T>,
     ) -> Result<Option<Pending<T::Ok>>, Error<T, Request>>;
+
+    /// Return the count of in-flight pending responses in the [`PendingStore`].
+    fn in_flight(&self) -> usize;
 }
 
 /// A [`PendingStore`] implementation that uses a [`VecDeque`]
@@ -133,6 +135,10 @@ where
         let response = this.pending.swap_remove_front(pending).unwrap();
 
         Ok(Some(response.1))
+    }
+
+    fn in_flight(&self) -> usize {
+        self.pending.len()
     }
 }
 
@@ -208,14 +214,6 @@ where
     }
 }
 
-impl<NT, P, Request> tower::load::Load for Maker<NT, P, Request> {
-    type Metric = u8;
-
-    fn load(&self) -> Self::Metric {
-        0
-    }
-}
-
 // ===== Client =====
 
 /// This type provides an implementation of a Tower
@@ -228,7 +226,6 @@ where
     T: Sink<Request> + TryStream,
 {
     mediator: mediator::Sender<ClientRequest<T, Request>>,
-    in_flight: Arc<atomic::AtomicUsize>,
     _error: PhantomData<fn(P, E)>,
 }
 
@@ -239,7 +236,6 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
             .field("mediator", &self.mediator)
-            .field("in_flight", &self.in_flight)
             .finish()
     }
 }
@@ -248,7 +244,7 @@ where
 
 /// A type used to track in-flight requests.
 ///
-/// Each pending response contains an associated `Tag` that is provided
+/// Each pending response has an associated `Tag` that is provided
 /// by the [`TagStore`], which is used to uniquely identify a request/response pair.
 pub struct Pending<Response> {
     tx: tokio::sync::oneshot::Sender<ClientResponse<Response>>,
@@ -368,7 +364,6 @@ where
     #[pin]
     transport: T,
 
-    in_flight: Arc<atomic::AtomicUsize>,
     finish: bool,
     rx_only: bool,
 
@@ -416,13 +411,11 @@ where
         F: FnOnce(E) + Send + 'static,
     {
         let (tx, rx) = mediator::new();
-        let in_flight = Arc::new(atomic::AtomicUsize::new(0));
         tokio::spawn({
             let c = ClientInner {
                 mediator: rx,
                 transport,
                 pending,
-                in_flight: in_flight.clone(),
                 error: PhantomData::<fn(E)>,
                 finish: false,
                 rx_only: false,
@@ -435,7 +428,6 @@ where
         });
         Client {
             mediator: tx,
-            in_flight,
             _error: PhantomData,
         }
     }
@@ -496,7 +488,6 @@ where
                             },
                             transport.as_mut(),
                         );
-                        this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
 
                         // if we have run for a while without yielding, yield so we can make progress
                         i += 1;
@@ -520,7 +511,7 @@ where
             }
         }
 
-        if this.in_flight.load(atomic::Ordering::Acquire) != 0 && !*this.rx_only {
+        if pending.as_ref().in_flight() != 0 && !*this.rx_only {
             // flush out any stuff we've sent in the past
             // don't return on NotReady since we have to check for responses too
             if *this.finish {
@@ -549,7 +540,7 @@ where
         //
         // note that we *could* have this just be a loop, but we don't want to poll the stream
         // if we know there's nothing for it to produce.
-        while this.in_flight.load(atomic::Ordering::Acquire) != 0 {
+        while pending.as_ref().in_flight() != 0 {
             match ready!(transport.as_mut().try_poll_next(cx))
                 .transpose()
                 .map_err(Error::from_stream_error)?
@@ -577,7 +568,6 @@ where
                         response: r,
                         span: pending.span,
                     });
-                    this.in_flight.fetch_sub(1, atomic::Ordering::AcqRel);
                 }
                 None => {
                     // the transport terminated while we were waiting for a response!
@@ -587,7 +577,7 @@ where
             }
         }
 
-        if *this.finish && this.in_flight.load(atomic::Ordering::Acquire) == 0 {
+        if *this.finish && pending.as_ref().in_flight() == 0 {
             if *this.rx_only {
                 // we have already closed the send side.
             } else {
@@ -643,17 +633,6 @@ where
                 Err(TrySendError::Closed(_)) => Err(E::from(Error::ClientDropped)),
             }
         })
-    }
-}
-
-impl<T, E, Request, P> tower::load::Load for Client<T, E, Request, P>
-where
-    T: Sink<Request> + TryStream,
-{
-    type Metric = usize;
-
-    fn load(&self) -> Self::Metric {
-        self.in_flight.load(atomic::Ordering::Acquire)
     }
 }
 
