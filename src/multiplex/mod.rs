@@ -23,9 +23,6 @@ pub use self::client::{Client, TagStore};
 pub mod server;
 pub use self::server::Server;
 
-mod pending;
-pub use pending::Pending;
-
 /// A convenience wrapper that lets you take separate transport and tag store types and use them as
 /// a single [`client::Transport`].
 #[pin_project]
