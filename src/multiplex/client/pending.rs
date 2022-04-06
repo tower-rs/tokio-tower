@@ -39,6 +39,7 @@ impl<Response> Pending<Response> {
         span: tracing::Span,
         in_flight: Arc<atomic::AtomicUsize>,
     ) -> Self {
+        in_flight.fetch_add(1, atomic::Ordering::AcqRel);
         Self {
             in_flight,
             inner: Some(PendingInner { tx, span }),
