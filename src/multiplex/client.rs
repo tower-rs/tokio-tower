@@ -1,3 +1,4 @@
+use super::Pending;
 use crate::mediator;
 use crate::mediator::TrySendError;
 use crate::wrappers::*;
@@ -14,9 +15,6 @@ use std::sync::{atomic, Arc};
 use std::task::{Context, Poll};
 use std::{error, fmt};
 use tower_service::Service;
-
-mod pending;
-pub use pending::Pending;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
 // instead, we allow the user to choose their own identifier format.
@@ -471,6 +469,7 @@ where
                         tracing::trace!("request sent");
                         drop(guard);
 
+                        this.in_flight.fetch_add(1, atomic::Ordering::AcqRel);
                         pending.as_mut().sent(
                             id,
                             Pending::new(res, span, this.in_flight.clone()),
