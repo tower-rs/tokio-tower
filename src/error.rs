@@ -3,6 +3,7 @@ use futures_sink::Sink;
 use std::{error, fmt};
 
 /// An error that occurred while servicing a request.
+#[non_exhaustive]
 pub enum Error<T, I>
 where
     T: Sink<I> + TryStream,
@@ -14,6 +15,9 @@ where
     ///
     /// If `None`, the transport closed without error while there were pending requests.
     BrokenTransportRecv(Option<<T as TryStream>::Error>),
+
+    /// The internal pending data store has dropped the pending response.
+    Cancelled,
 
     /// Attempted to issue a `call` when no more requests can be in flight.
     ///
@@ -40,6 +44,7 @@ where
                 f.pad("underlying transport failed while attempting to receive a response")
             }
             Error::BrokenTransportRecv(None) => f.pad("transport closed with in-flight requests"),
+            Error::Cancelled => f.pad("request was cancelled internally"),
             Error::TransportFull => f.pad("no more in-flight requests allowed"),
             Error::ClientDropped => f.pad("Client was dropped"),
             Error::Desynchronized => f.pad("server sent a response the client did not expect"),
@@ -58,6 +63,7 @@ where
             Error::BrokenTransportSend(ref se) => write!(f, "BrokenTransportSend({:?})", se),
             Error::BrokenTransportRecv(Some(ref se)) => write!(f, "BrokenTransportRecv({:?})", se),
             Error::BrokenTransportRecv(None) => f.pad("BrokenTransportRecv"),
+            Error::Cancelled => f.pad("Cancelled"),
             Error::TransportFull => f.pad("TransportFull"),
             Error::ClientDropped => f.pad("ClientDropped"),
             Error::Desynchronized => f.pad("Desynchronized"),

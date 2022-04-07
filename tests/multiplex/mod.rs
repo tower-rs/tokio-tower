@@ -4,7 +4,9 @@ use futures_util::pin_mut;
 use slab::Slab;
 use std::pin::Pin;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tower::multiplex::{Client, MultiplexTransport, Server, TagStore};
+use tokio_tower::multiplex::{
+    client::VecDequePendingStore, Client, MultiplexTransport, Server, TagStore,
+};
 use tower_service::Service;
 use tower_test::mock;
 
@@ -33,7 +35,7 @@ async fn integration() {
     let tx = TcpStream::connect(&addr).await.unwrap();
     let tx = AsyncBincodeStream::from(tx).for_async();
     let mut tx: Client<_, PanicError, _> =
-        Client::new(MultiplexTransport::new(tx, SlabStore(Slab::new())));
+        Client::builder(MultiplexTransport::new(tx, SlabStore(Slab::new()))).build();
 
     // accept
     let (rx, _) = rx.accept().await.unwrap();
@@ -62,7 +64,10 @@ async fn racing_close() {
     let tx = TcpStream::connect(&addr).await.unwrap();
     let tx = AsyncBincodeStream::from(tx).for_async();
     let mut tx: Client<_, PanicError, _> =
-        Client::new(MultiplexTransport::new(tx, SlabStore(Slab::new())));
+        Client::builder(MultiplexTransport::new(tx, SlabStore(Slab::new())))
+            .pending_store(VecDequePendingStore::default())
+            .on_service_error(|_| {})
+            .build();
 
     let (service, handle) = mock::pair::<Request, Response>();
     pin_mut!(handle);
