@@ -2,16 +2,15 @@ use crate::mediator;
 use crate::mediator::TrySendError;
 use crate::wrappers::*;
 use crate::Error;
-use crate::MakeTransport;
 use futures_core::{ready, stream::TryStream};
 use futures_sink::Sink;
 use pin_project::pin_project;
 use std::collections::VecDeque;
+use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{error, fmt};
 use tower_service::Service;
 
 // NOTE: this implementation could be more opinionated about request IDs by using a slab, but
@@ -139,78 +138,6 @@ where
 
     fn in_flight(&self) -> usize {
         self.pending.len()
-    }
-}
-
-/// A factory that makes new [`Client`] instances by creating new transports and wrapping them in
-/// fresh `Client`s.
-pub struct Maker<NT, P, Request> {
-    t_maker: NT,
-    _req: PhantomData<fn(P, Request)>,
-}
-
-impl<NT, P, Request> fmt::Debug for Maker<NT, P, Request>
-where
-    NT: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Maker")
-            .field("t_maker", &self.t_maker)
-            .finish()
-    }
-}
-
-impl<NT, P, Request> Maker<NT, P, Request> {
-    /// Make a new `Client` factory that uses the given `MakeTransport` factory.
-    pub fn new(t: NT) -> Self {
-        Maker {
-            t_maker: t,
-            _req: PhantomData,
-        }
-    }
-
-    // NOTE: it'd be *great* if the user had a way to specify a service error handler for all
-    // spawned services, but without https://github.com/rust-lang/rust/pull/49224 or
-    // https://github.com/rust-lang/rust/issues/29625 that's pretty tricky (unless we're willing to
-    // require Fn + Clone)
-}
-
-/// A failure to spawn a new `Client`.
-#[derive(Debug)]
-pub enum SpawnError<E> {
-    /// The executor failed to spawn the `tower_buffer::Worker`.
-    SpawnFailed,
-
-    /// A new transport could not be produced.
-    Inner(E),
-}
-
-impl<NT, P, Target, Request> Service<Target> for Maker<NT, P, Request>
-where
-    NT: MakeTransport<Target, Request>,
-    NT::Transport: 'static + Send + TagStore<Request, NT::Item>,
-    <NT::Transport as TagStore<Request, NT::Item>>::Tag: 'static + Send,
-    P: PendingStore<NT::Transport, Request> + Default + Send + 'static,
-    Request: 'static + Send,
-    NT::Item: 'static + Send,
-    NT::SinkError: 'static + Send + Sync,
-    NT::Error: 'static + Send + Sync,
-    NT::Future: 'static + Send,
-{
-    type Error = SpawnError<NT::MakeError>;
-    type Response = Client<NT::Transport, Error<NT::Transport, Request>, Request, P>;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn call(&mut self, target: Target) -> Self::Future {
-        let maker = self.t_maker.make_transport(target);
-        Box::pin(async move {
-            let transport = maker.await.map_err(SpawnError::Inner)?;
-            Ok(Client::new_internal(transport, P::default(), |_| {}))
-        })
-    }
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.t_maker.poll_ready(cx).map_err(SpawnError::Inner)
     }
 }
 
@@ -633,31 +560,5 @@ where
                 Err(TrySendError::Closed(_)) => Err(E::from(Error::ClientDropped)),
             }
         })
-    }
-}
-
-// ===== impl SpawnError =====
-
-impl<T> fmt::Display for SpawnError<T>
-where
-    T: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            SpawnError::SpawnFailed => f.pad("error spawning multiplex client"),
-            SpawnError::Inner(_) => f.pad("error making new multiplex transport"),
-        }
-    }
-}
-
-impl<T> error::Error for SpawnError<T>
-where
-    T: error::Error + 'static,
-{
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match *self {
-            SpawnError::SpawnFailed => None,
-            SpawnError::Inner(ref te) => Some(te),
-        }
     }
 }
