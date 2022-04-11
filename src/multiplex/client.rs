@@ -63,7 +63,7 @@ where
     ) -> Result<Option<Pending<T::Ok>>, Error<T, Request>>;
 
     /// Return the count of in-flight pending responses in the [`PendingStore`].
-    fn in_flight(&self, transport: Pin<&mut T>) -> usize;
+    fn in_flight(&self, transport: &T) -> usize;
 }
 
 /// A [`PendingStore`] implementation that uses a [`VecDeque`]
@@ -136,7 +136,7 @@ where
         Ok(Some(response.1))
     }
 
-    fn in_flight(&self, _transport: Pin<&mut T>) -> usize {
+    fn in_flight(&self, _transport: &T) -> usize {
         self.pending.len()
     }
 }
@@ -438,7 +438,7 @@ where
             }
         }
 
-        if pending.as_ref().in_flight(transport.as_mut()) != 0 && !*this.rx_only {
+        if pending.as_ref().in_flight(&transport) != 0 && !*this.rx_only {
             // flush out any stuff we've sent in the past
             // don't return on NotReady since we have to check for responses too
             if *this.finish {
@@ -467,7 +467,7 @@ where
         //
         // note that we *could* have this just be a loop, but we don't want to poll the stream
         // if we know there's nothing for it to produce.
-        while pending.as_ref().in_flight(transport.as_mut()) != 0 {
+        while pending.as_ref().in_flight(&transport) != 0 {
             match ready!(transport.as_mut().try_poll_next(cx))
                 .transpose()
                 .map_err(Error::from_stream_error)?
@@ -504,7 +504,7 @@ where
             }
         }
 
-        if *this.finish && pending.as_ref().in_flight(transport.as_mut()) == 0 {
+        if *this.finish && pending.as_ref().in_flight(&transport) == 0 {
             if *this.rx_only {
                 // we have already closed the send side.
             } else {
