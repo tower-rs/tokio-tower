@@ -1,5 +1,5 @@
 use crate::{ready, unwrap, EchoService, PanicError, Request, Response};
-use async_bincode::*;
+use async_bincode::AsyncBincodeStream;
 use futures_util::pin_mut;
 use slab::Slab;
 use std::pin::Pin;
