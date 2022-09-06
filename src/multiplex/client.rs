@@ -246,6 +246,9 @@ where
     ///
     /// If the [`Client`] encounters an error, it passes that error to `on_service_error`
     /// before exiting.
+    ///
+    /// `on_service_error` will be run from within a `Drop` implementation when the transport task
+    /// panics, so it will likely abort if it panics.
     pub fn on_service_error<F2>(self, on_service_error: F2) -> Builder<T, E, Request, F2, P>
     where
         F: FnOnce(E) + Send + 'static,
@@ -342,7 +345,7 @@ where
 {
     fn drop(&mut self) {
         if let Some(handler) = self.on_service_error.take() {
-            (handler)(E::from(Error::<T, Request>::TransportUnexpectedExit))
+            (handler)(E::from(Error::<T, Request>::TransportDropped))
         }
     }
 }
