@@ -246,6 +246,9 @@ where
     ///
     /// If the [`Client`] encounters an error, it passes that error to `on_service_error`
     /// before exiting.
+    ///
+    /// `on_service_error` will be run from within a `Drop` implementation when the transport task
+    /// panics, so it will likely abort if it panics.
     pub fn on_service_error<F2>(self, on_service_error: F2) -> Builder<T, E, Request, F2, P>
     where
         F: FnOnce(E) + Send + 'static,
@@ -323,6 +326,30 @@ where
     }
 }
 
+/// Handles executing the service error handler in case awaiting the `ClientInner` Future panics.
+struct ClientInnerCleanup<Request, T, E, F>
+where
+    T: Sink<Request> + TryStream,
+    E: From<Error<T, Request>>,
+    F: FnOnce(E),
+{
+    on_service_error: Option<F>,
+    _phantom_data: PhantomData<(Request, T, E)>,
+}
+
+impl<Request, T, E, F> Drop for ClientInnerCleanup<Request, T, E, F>
+where
+    T: Sink<Request> + TryStream,
+    E: From<Error<T, Request>>,
+    F: FnOnce(E),
+{
+    fn drop(&mut self) {
+        if let Some(handler) = self.on_service_error.take() {
+            (handler)(E::from(Error::<T, Request>::TransportDropped))
+        }
+    }
+}
+
 impl<T, E, Request, P> Client<T, E, Request, P>
 where
     T: Sink<Request> + TryStream + TagStore<Request, <T as TryStream>::Ok> + Send + 'static,
@@ -348,8 +375,15 @@ where
                 rx_only: false,
             };
             async move {
-                if let Err(e) = c.await {
-                    on_service_error(e);
+                let mut cleanup = ClientInnerCleanup {
+                    on_service_error: Some(on_service_error),
+                    _phantom_data: PhantomData::default(),
+                };
+
+                let result = c.await;
+                let error = cleanup.on_service_error.take().unwrap();
+                if let Err(e) = result {
+                    error(e);
                 }
             }
         });

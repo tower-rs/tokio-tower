@@ -266,7 +266,7 @@ where
             if let Some(rq) = rq {
                 // the service is ready, and we have another request!
                 // you know what that means:
-                pending.push(this.service.call(rq));
+                pending.push_back(this.service.call(rq));
                 *this.in_flight += 1;
             } else {
                 // there are no more requests coming

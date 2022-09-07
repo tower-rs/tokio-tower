@@ -29,6 +29,10 @@ where
 
     /// The server sent a response that the client was not expecting.
     Desynchronized,
+
+    /// The underlying transport task did not exit gracefully (either panic or cancellation).
+    /// Transport task panics can happen for example when the codec logic panics.
+    TransportDropped,
 }
 
 impl<T, I> fmt::Display for Error<T, I>
@@ -48,6 +52,9 @@ where
             Error::TransportFull => f.pad("no more in-flight requests allowed"),
             Error::ClientDropped => f.pad("Client was dropped"),
             Error::Desynchronized => f.pad("server sent a response the client did not expect"),
+            Error::TransportDropped => {
+                f.pad("underlying transport task exited unexpectedly (panic or cancellation)")
+            }
         }
     }
 }
@@ -67,6 +74,7 @@ where
             Error::TransportFull => f.pad("TransportFull"),
             Error::ClientDropped => f.pad("ClientDropped"),
             Error::Desynchronized => f.pad("Desynchronized"),
+            Error::TransportDropped => f.pad("TransportDropped"),
         }
     }
 }
