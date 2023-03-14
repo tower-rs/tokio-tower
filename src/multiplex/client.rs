@@ -502,10 +502,19 @@ where
         // note that we *could* have this just be a loop, but we don't want to poll the stream
         // if we know there's nothing for it to produce.
         while pending.as_ref().in_flight(&transport) != 0 {
-            match ready!(transport.as_mut().try_poll_next(cx))
-                .transpose()
-                .map_err(Error::from_stream_error)?
-            {
+            let poll_next = match transport.as_mut().try_poll_next(cx) {
+                Poll::Pending => {
+                    // try_poll_next could mutate the pending store and actually change the number
+                    // of in_flight requests, so we check again if we have an inflight request or not
+                    if pending.as_ref().in_flight(&transport) == 0 {
+                        break;
+                    }
+                    return Poll::Pending;
+                }
+                Poll::Ready(x) => x,
+            };
+
+            match poll_next.transpose().map_err(Error::from_stream_error)? {
                 Some(r) => {
                     let id = transport.as_mut().finish_tag(&r);
 
