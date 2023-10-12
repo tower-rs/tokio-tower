@@ -66,7 +66,7 @@
 //!     snd: mpsc::UnboundedSender<T>,
 //! }
 //!
-//! impl<T: Debug> futures_sink::Sink<T> for ChannelTransport<T> {
+//! impl<T: Debug> futures_util::sink::Sink<T> for ChannelTransport<T> {
 //!     type Error = StdError;
 //!
 //!     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
